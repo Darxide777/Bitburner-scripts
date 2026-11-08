@@ -21,6 +21,7 @@ import { NFG, type FactionData } from "./lib/plan/data.js";
 import { augValue, DEFAULT_PLAN, plan as makePlan, type Plan, type PlanConfig } from "./lib/plan/factions.js";
 import type { GangConfig } from "./lib/plan/gang.js";
 import { manageSleeves } from "./lib/sleeves.js";
+import { DEFAULT_STANEK, manageStanek, type StanekConfig, type StanekStatus } from "./lib/stanek.js";
 import { runTask, spawnTask } from "./lib/task.js";
 import type { Snapshot } from "./lib/types.js";
 import type { HackConfig } from "./hack/manager.js";
@@ -38,6 +39,8 @@ interface DaemonConfig {
   manageGang: boolean;
   /** Auto-run casino.js early in a run (see casinoModule). */
   casino: boolean;
+  /** Overrides for Stanek's Gift management (see lib/stanek.ts DEFAULT_STANEK). */
+  stanek: Partial<StanekConfig>;
   /** Overrides for the gang manager (see lib/plan/gang.ts DEFAULT_GANG); mode is set automatically unless given. */
   gang: Partial<GangConfig>;
 }
@@ -50,6 +53,7 @@ const DEFAULTS: DaemonConfig = {
   manageSleeves: true,
   manageGang: true,
   casino: true,
+  stanek: {},
   gang: {},
 };
 
@@ -112,7 +116,8 @@ export async function main(ns: NS): Promise<void> {
     if (s?.gang && cfg.manageGang) wanted.push(SCRIPTS.gangManager);
     // keep room for the casino table while this install's $10b allowance is unclaimed
     if (s && cfg.casino && (s.earned.casino ?? 0) < CASINO_CAP) wanted.push(SCRIPTS.casinoTable);
-    const reserve = homeReserve(ns, wanted);
+    // plus room for the Stanek charger while it waits for a big enough block of home RAM
+    const reserve = homeReserve(ns, wanted, stanekStatus?.reserveGB ?? 0);
     const hackCfg: Partial<HackConfig> = {
       homeReserve: reserve,
       // lend spare RAM to factions while we are working for one
@@ -166,7 +171,7 @@ function freeHome(ns: NS): void {
 const ONE_OFF_TASKS = ["tasks/install.js", "tasks/destroy.js"];
 
 /** RAM to keep free on home for tasks: the biggest frequently-run task + headroom. */
-function homeReserve(ns: NS, wanted: string[] = []): number {
+function homeReserve(ns: NS, wanted: string[] = [], extraGB = 0): number {
   const tasks = ns.ls("home", "tasks/").filter((f) => f.endsWith(".js") && !ONE_OFF_TASKS.includes(f));
   const biggest = Math.max(0, ...tasks.map((t) => ns.getScriptRam(t, "home")));
   // long-running managers that should be up but aren't: hold their RAM back so they can start
@@ -174,8 +179,8 @@ function homeReserve(ns: NS, wanted: string[] = []): number {
     .filter((f) => !ns.isRunning(f, "home"))
     .reduce((sum, f) => sum + ns.getScriptRam(f, "home"), 0);
   const home = ns.getServerMaxRam("home");
-  // never reserve more than half of home
-  return Math.min(home / 2, biggest + 8 + pendingStart);
+  // never reserve more than half of home (+ whatever Stanek asked for, itself ≤ its share of home)
+  return Math.min(home / 2, biggest + 8 + pendingStart) + extraGB;
 }
 
 const CASINO_CAP = 10e9;
@@ -198,6 +203,7 @@ function casinoModule(ns: NS, s: Snapshot, m: Metrics, event: (k: string, msg: s
 const TRAVEL_COOLDOWN_MS = 120_000;
 let lastTravel = 0;
 let sleeveSummary = "";
+let stanekStatus: StanekStatus | null = null;
 
 /** Factions that can host a gang (combat ones first: territory, better augs for rep play). */
 const GANG_FACTIONS = [
@@ -286,6 +292,13 @@ async function factionsModule(
     act.crime = null;
   }
   if (dcfg.manageGang) await gangModule(ns, data, p, dcfg, event);
+
+  // Stanek before anything can buy an aug: the gift can only be accepted with no augs
+  try {
+    stanekStatus = await manageStanek(ns, data, s.homeCores, { ...DEFAULT_STANEK, ...dcfg.stanek }, event);
+  } catch (e) {
+    event("error", `stanek failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
 
   // sleeves first, so none of them is sitting on the faction the player is about to work for
   if (dcfg.manageSleeves && s.sleeves > 0) {
@@ -440,6 +453,15 @@ function draw(
     L.push(`karma ${num(s.karma)} / ${num(GANG_KARMA)}  (${num(r.karma)}/s)  →  time to gang ${dur(m.timeToGang)}`);
   }
   L.push(`sleeves ${s.sleeves}${sleeveSummary ? `: ${sleeveSummary}` : ""}   kills ${s.kills}`);
+  if (stanekStatus && stanekStatus.state !== "no SF13") {
+    const st = stanekStatus;
+    const bonus = Object.entries(st.bonus)
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `${k} +${(v * 100).toFixed(1)}%`)
+      .join(" · ");
+    const what = st.charging ? "charging" : st.waitingForRam ? "waiting for RAM to charge" : st.state;
+    L.push(`stanek ${st.width}×${st.height}: ${st.fragments} pieces (layout ${st.layoutScore.toFixed(1)}/${st.bestScore.toFixed(1)}) · ${what}${bonus ? ` · ${bonus}` : ""}`);
+  }
 
   if (plan) {
     L.push("");

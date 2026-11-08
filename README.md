@@ -48,6 +48,7 @@ daemon.js                 orchestrator: telemetry → metrics → planner module
 ├─ hack/manager.js        long-running HWGW batcher across every rooted server's RAM
 │   └─ hack/w/{h,g,w,s}.js  minimal workers (hack/grow/weaken/share)
 ├─ gang/manager.js        long-running gang manager, ticks on every gang update
+├─ stanek/charge.js       one big charging process for Stanek's Gift (spawned after installs)
 └─ casino.js              blackjack save-scummer for the casino's $10b-per-install allowance
 lib/                      task runner, call proxy, metrics, network, file IO, formatting
 lib/plan/                 faction/aug data collection, requirement evaluator, planner
@@ -106,6 +107,23 @@ Homicide (Mug while Homicide would mostly fail), which minimizes time-to-gang. O
 grindable faction gets its best-suited sleeve, never the faction the player is working for.
 Leftover sleeves recover from shock or do crime. Cheap sleeve augs are bought as shock reaches 0.
 
+**Stanek's Gift** (`lib/plan/stanek.ts` solves, `lib/stanek.ts` manages). From the game's source,
+a fragment's bonus is `ln(highestCharge+1)/60 · ((numCharge+1)/5)^0.07 · power · boost`, where
+`highestCharge` is the most threads (× core bonus) used in **one** charge call and `boost` is the
+product of the powers of every booster touching it. Consequences:
+
+- **Layout** maximizes Σ weight × power × boost. The solver mirrors the game's rotation and
+  neighbor geometry. It starts greedy, then runs simulated annealing with 64 seeded restarts
+  (~1 s, within ~1% of much bigger searches) and a hill-climb polish. Default weights favor
+  Rep, then Hacking, Hacking Speed and Hacking Money. Installs keep the layout but wipe charges,
+  so a better layout is only applied when the board is empty or uncharged.
+- **Charging** happens once per install: each fragment is charged `rounds` (5) times by a single
+  process on home using `ramShare` (50%) of home RAM. ln-scaling makes 50% ≈ 94% of a full-home
+  charge. RAM is reclaimed from hacking by raising the home reserve until the block is free.
+  After 5 minutes, it starts with whatever ≥25% is available.
+- **Acceptance**: the gift can only be accepted before any non-NeuroFlux aug, so the daemon
+  accepts it at BitNode start, before anything can buy augs.
+
 **Casino** (`casino.ts`). The casino has no API, so this drives the blackjack UI through the DOM
 (25 GB while it runs). Loop: save → play a hand with basic strategy → on a loss, reload the
 page, which restores the save and restarts the script. Bets are min($100m, money). It stops
@@ -145,6 +163,7 @@ faction-working.
       escalation-aware purchase order, donations, NeuroFlux, install timing, w0r1dd43m0n
 - [ ] Learn install timing from `runs.txt` history instead of fixed `installPatience`
 - [x] Casino: blackjack save-scumming for $10b per install
+- [x] Stanek's Gift: acceptance, layout solver, per-install charging
 - [ ] Company work → megacorp factions (ECorp, MegaCorp, KuaiGong, NWO, …)
 - [ ] Hacking-XP mode when the hack level gates the next faction or w0r1dd43m0n
 - [ ] Move the remaining recurring tasks onto the call proxy to shrink the home reserve
@@ -154,5 +173,5 @@ faction-working.
 - [ ] Gang: account for v3's install penalty on ascension multipliers (`getInstallResult`)
 - [ ] Hacknet servers + hash spending
 - [ ] Bladeburner (alternate win condition + rep)
-- [ ] Corporation, Stanek's Gift, IPvGO, coding contracts, stock market
+- [ ] Corporation, IPvGO, coding contracts, stock market
 - [ ] Endgame: Daedalus → The Red Pill → w0r1dd43m0n, then auto-continue into the next BN12 level
