@@ -238,10 +238,21 @@ function metricsLine(s: Snapshot, m: Metrics, hack: { expectedPerSec?: number; p
 
 /** Detect augment installs / node resets and write one summary line per finished run. */
 function trackRuns(ns: NS, s: Snapshot, tracker: MetricsTracker, event: (k: string, m: string, d?: unknown) => void) {
-  const st = readJson<DaemonState | null>(ns, STATE_FILE, null);
+  const st = readJson<(DaemonState & { run?: DaemonState["cur"] }) | null>(ns, STATE_FILE, null);
   const m = tracker.metrics();
   const r = m.long.window >= 120_000 ? m.long : m.short;
-  if (!st) {
+  // migrate older state files (the field used to be called `run`) and repair partial ones
+  if (st && !st.cur) {
+    st.cur = st.run ?? {
+      start: st.lastAugReset ?? s.lastAugReset,
+      peakIncome: 0,
+      peakRepRate: 0,
+      hackLevel: s.hackLevel,
+      augsInstalled: s.augsInstalled,
+    };
+    delete st.run;
+  }
+  if (!st || typeof st.lastAugReset !== "number") {
     writeJson(ns, STATE_FILE, {
       lastAugReset: s.lastAugReset,
       lastNodeReset: s.lastNodeReset,
