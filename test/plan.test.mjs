@@ -146,3 +146,13 @@ test("grindFactions/repGated are complete even when pending is truncated to gang
   assert.equal(p.repGated.Tetrads, 10);
   assert.match(p.notes.join(" "), /CyberSec/);
 });
+
+test("favorFactions: joined workable factions nobody grinds, closest to donations first", () => {
+  const w = world();
+  w.factions.A = fac({ joined: true, workTypes: ["hacking"], bestWork: "hacking", favor: 140, favorGain: 20 });
+  w.factions.B = fac({ joined: true, workTypes: ["hacking"], bestWork: "hacking", favor: 10, favorGain: 5 });
+  w.factions.C = fac({ joined: true, workTypes: ["hacking"], bestWork: "hacking", favor: 300 }); // already donates
+  const p = plan(input(w));
+  assert.ok(!p.favorFactions.includes("CyberSec"), "CyberSec is a grind target, not a favor target");
+  assert.deepEqual(p.favorFactions.filter((f) => ["A", "B", "C"].includes(f)), ["A", "B", "C"]);
+});

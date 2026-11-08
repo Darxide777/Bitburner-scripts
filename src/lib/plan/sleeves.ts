@@ -5,7 +5,8 @@
 //   otherwise: one sleeve per faction we still need rep at (best sleeve for each, in
 //     the planner's priority order), never the faction the player is working for
 //     (the game doesn't allow two workers on one faction)
-//   leftovers: shock recovery while shocked, else crime (money + karma)
+//   then: spare sleeves build rep (→ favor at install) at factions nobody is grinding
+//   leftovers: shock recovery while shocked, else the best-paying crime they can pull off
 
 export type Assignment =
   | { kind: "faction"; faction: string; type: string }
@@ -18,6 +19,7 @@ export interface SleeveInfo {
   /** current task, normalised to an Assignment (null = idle / something else) */
   current: Assignment | null;
   homicideChance: number;
+  heistChance: number;
   /** rep/s by faction then work type */
   gains: Record<string, Record<string, number>>;
 }
@@ -27,19 +29,31 @@ export interface SleeveInput {
   needKarma: boolean;
   /** factions to grind, most important first */
   targets: string[];
+  /** lower-priority factions for spare sleeves (rep → favor) */
+  favorTargets?: string[];
   playerFaction: string | null;
 }
 
-export function crimeFor(s: SleeveInfo): string {
+/** Best karma per second (no gang yet). */
+export function karmaCrime(s: SleeveInfo): string {
   return s.homicideChance >= 0.5 ? "Homicide" : "Mug";
+}
+
+/**
+ * Best money per second. Base payouts: Heist ≈ $200k/s vs Homicide ≈ $15k/s, so Heist
+ * wins whenever it succeeds at least ~10% of the time; we ask for 30% to limit failures.
+ */
+export function moneyCrime(s: SleeveInfo): string {
+  return s.heistChance >= 0.3 ? "Heist" : karmaCrime(s);
 }
 
 export function decideSleeves(input: SleeveInput): Assignment[] {
   const out: (Assignment | null)[] = input.sleeves.map(() => null);
-  if (input.needKarma) return input.sleeves.map((s) => ({ kind: "crime", crime: crimeFor(s) }));
+  if (input.needKarma) return input.sleeves.map((s) => ({ kind: "crime", crime: karmaCrime(s) }));
 
   const free = new Set(input.sleeves.map((_, idx) => idx));
-  for (const f of input.targets) {
+  const targets = [...input.targets, ...(input.favorTargets ?? []).filter((f) => !input.targets.includes(f))];
+  for (const f of targets) {
     if (f === input.playerFaction || !free.size) continue;
     let bestIdx = -1;
     let bestType = "";
@@ -59,7 +73,7 @@ export function decideSleeves(input: SleeveInput): Assignment[] {
   }
   for (const idx of free) {
     const s = input.sleeves[idx];
-    out[idx] = s.shock > 0 ? { kind: "recovery" } : { kind: "crime", crime: crimeFor(s) };
+    out[idx] = s.shock > 0 ? { kind: "recovery" } : { kind: "crime", crime: moneyCrime(s) };
   }
   return out as Assignment[];
 }

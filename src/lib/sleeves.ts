@@ -29,6 +29,7 @@ export async function manageSleeves(
   ns: NS,
   data: FactionData,
   targets: string[],
+  favorTargets: string[],
   playerFaction: string | null,
   needKarma: boolean,
   augBudget = 0.001,
@@ -41,8 +42,9 @@ export async function manageSleeves(
 
   // rep/s for every sleeve × target faction × work type
   const combos: [number, string, string][] = [];
+  const allTargets = [...new Set([...targets, ...favorTargets])];
   for (const i of idx)
-    for (const f of targets) for (const w of data.factions[f]?.workTypes ?? []) combos.push([i, f, w]);
+    for (const f of allTargets) for (const w of data.factions[f]?.workTypes ?? []) combos.push([i, f, w]);
   const gains = combos.length
     ? await callEach<{ reputation: number }>(
         ns,
@@ -50,13 +52,18 @@ export async function manageSleeves(
         combos.map(([i, f, w]) => [persons[i], w, data.factions[f].favor]),
       )
     : [];
-  const chances = await callEach<number>(ns, "formulas.work.crimeSuccessChance", idx.map((i) => [persons[i], "Homicide"]));
+  const chances = await callEach<number>(
+    ns,
+    "formulas.work.crimeSuccessChance",
+    idx.flatMap((i) => [[persons[i], "Homicide"], [persons[i], "Heist"]]),
+  );
 
   const sleeves: SleeveInfo[] = idx.map((i) => ({
     i,
     shock: persons[i]?.shock ?? 0,
     current: normalise(tasks[i] ?? null),
-    homicideChance: chances[i] ?? 0,
+    homicideChance: chances[2 * i] ?? 0,
+    heistChance: chances[2 * i + 1] ?? 0,
     gains: {},
   }));
   combos.forEach(([i, f, w], k) => {
@@ -64,7 +71,7 @@ export async function manageSleeves(
     (g[f] ??= {})[w] = (gains[k]?.reputation ?? 0) * 5;
   });
 
-  const plan = decideSleeves({ sleeves, needKarma, targets, playerFaction });
+  const plan = decideSleeves({ sleeves, needKarma, targets, favorTargets, playerFaction });
 
   // apply: move changing sleeves to idle first so faction slots are free, then assign
   const changing = idx.filter((i) => !sameAssignment(sleeves[i].current, plan[i]));

@@ -256,7 +256,7 @@ async function factionsModule(
     try {
       const targets = p.grindFactions;
       const needKarma = !data.gangFaction && data.karma > GANG_KARMA;
-      const rep = await manageSleeves(ns, data, targets, act.work?.faction ?? null, needKarma);
+      const rep = await manageSleeves(ns, data, targets, p.favorFactions, act.work?.faction ?? null, needKarma);
       for (const c of rep.changed) event("sleeve", c);
       if (rep.augsBought) event("sleeve", `bought ${rep.augsBought} sleeve augmentation(s)`);
       sleeveSummary = summarizeSleeves(rep.assignments);

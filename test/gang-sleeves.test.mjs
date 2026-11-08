@@ -78,3 +78,20 @@ test("one sleeve per target faction, best sleeve each, never the player's factio
   assert.deepEqual(a[0], { kind: "faction", faction: "B", type: "field" });
   assert.deepEqual(a[2], { kind: "recovery" }); // shocked leftover recovers
 });
+
+test("with a gang, spare sleeves build favor at other factions instead of doing crime", () => {
+  const sleeves = [0, 1, 2].map((i) => sleeve(i, { gains: { A: { hacking: 3 }, F1: { field: 2 }, F2: { hacking: 1 } } }));
+  const a = decideSleeves({ sleeves, needKarma: false, targets: ["A"], favorTargets: ["F1", "F2"], playerFaction: null });
+  assert.deepEqual(a.map((x) => x.faction).sort(), ["A", "F1", "F2"]);
+});
+
+test("leftover sleeves pick the best-paying crime (Heist when it's likely to succeed)", () => {
+  const sleeves = [sleeve(0, { heistChance: 0.8 }), sleeve(1, { heistChance: 0.1 })];
+  const a = decideSleeves({ sleeves, needKarma: false, targets: [], favorTargets: [], playerFaction: null });
+  assert.deepEqual(a, [{ kind: "crime", crime: "Heist" }, { kind: "crime", crime: "Homicide" }]);
+});
+
+test("karma mode still uses Homicide even when Heist is available", () => {
+  const a = decideSleeves({ sleeves: [sleeve(0, { heistChance: 1 })], needKarma: true, targets: [], playerFaction: null });
+  assert.deepEqual(a, [{ kind: "crime", crime: "Homicide" }]);
+});

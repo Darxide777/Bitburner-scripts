@@ -115,6 +115,12 @@ export interface Plan {
   pending: (Candidate & { eta: number })[];
   /** Every joined, workable faction that still gates a wanted aug, most valuable first (for sleeves). */
   grindFactions: string[];
+  /**
+   * Joined, workable factions nobody needs to grind for augs, best first, for spare sleeves:
+   * rep becomes favor at install (×rep gain later, donations at the threshold), so those
+   * about to unlock donations come first, then the ones with the most unowned value.
+   */
+  favorFactions: string[];
   /** Number of wanted augs still gated on rep, per (best-source) faction. Not truncated. */
   repGated: Record<string, number>;
   nextEta: number;
@@ -379,6 +385,17 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     ready,
     readyCost: readyCost + donations,
     pending: pending.slice(0, 8),
+    favorFactions: joined
+      .filter((f) => usable(f) && f !== data.gangFaction && F[f].workTypes.length > 0)
+      .filter((f) => !pending.some((c) => c.faction === f && c.repGap > 0 && c.donation === 0))
+      .sort((a, b) => {
+        const below = (f: string) => (F[f].favor < data.favorToDonate ? 1 : 0);
+        return (
+          below(b) - below(a) ||
+          F[b].favor + F[b].favorGain - (F[a].favor + F[a].favorGain) ||
+          unownedValue(b) - unownedValue(a)
+        );
+      }),
     repGated: pending
       .filter((c) => c.repGap > 0 && c.donation === 0)
       .reduce<Record<string, number>>((acc, c) => ((acc[c.faction] = (acc[c.faction] ?? 0) + 1), acc), {}),
