@@ -17,7 +17,8 @@ export const SCRIPTS = {
   daemon: "daemon.js",
   hackManager: "hack/manager.js",
   gangManager: "gang/manager.js",
-  casino: "casino.js",
+  casino: "casino.js", // launcher (small)
+  casinoTable: "casino/table.js", // the DOM-driving script (~36 GB)
   hack: "hack/w/h.js",
   grow: "hack/w/g.js",
   weaken: "hack/w/w.js",

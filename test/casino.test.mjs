@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { shouldHit } from "../dist/casino.js";
+import { shouldHit } from "../dist/casino/table.js";
 
 const hard = (best) => ({ best, soft: false });
 const soft = (best) => ({ best, soft: true });

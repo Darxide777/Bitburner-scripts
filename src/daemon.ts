@@ -108,7 +108,11 @@ export async function main(ns: NS): Promise<void> {
     if (s && cfg.casino) casinoModule(ns, s, m, event);
 
     // ---- hacking manager ----
-    const reserve = homeReserve(ns, s?.gang && cfg.manageGang ? [SCRIPTS.gangManager] : []);
+    const wanted: string[] = [];
+    if (s?.gang && cfg.manageGang) wanted.push(SCRIPTS.gangManager);
+    // keep room for the casino table while this install's $10b allowance is unclaimed
+    if (s && cfg.casino && (s.earned.casino ?? 0) < CASINO_CAP) wanted.push(SCRIPTS.casinoTable);
+    const reserve = homeReserve(ns, wanted);
     const hackCfg: Partial<HackConfig> = {
       homeReserve: reserve,
       // lend spare RAM to factions while we are working for one
@@ -129,8 +133,8 @@ export async function main(ns: NS): Promise<void> {
       lastNotes = notes;
     }
 
-    // ---- economy ----
-    if (s && Date.now() - lastEconomy > cfg.economyEveryMs) {
+    // ---- economy (frozen while casino.js bets: spending would make the game reject a bet) ----
+    if (s && Date.now() - lastEconomy > cfg.economyEveryMs && !ns.isRunning(SCRIPTS.casinoTable, "home")) {
       lastEconomy = Date.now();
       const spend = cfg.infraSpend ?? current?.infraSpend ?? 0.5;
       const r = await runTask<string[]>(ns, "tasks/economy.js", [s.money * spend]);
@@ -182,7 +186,7 @@ const CASINO_CAP = 10e9;
  * casino.js records its outcome per install, so a failed attempt isn't retried every tick.
  */
 function casinoModule(ns: NS, s: Snapshot, m: Metrics, event: (k: string, msg: string, d?: unknown) => void) {
-  if (ns.isRunning(SCRIPTS.casino, "home")) return;
+  if (ns.isRunning(SCRIPTS.casinoTable, "home")) return;
   if ((s.earned.casino ?? 0) >= CASINO_CAP) return;
   const income = Math.max(m.short.income, m.long.income);
   if (income * 1800 >= CASINO_CAP) return;
@@ -221,6 +225,8 @@ async function gangModule(ns: NS, data: FactionData, p: Plan, dcfg: DaemonConfig
   // respect → gang-faction rep while it still gates augs we want; otherwise money
   const needRep = (p.repGated[data.gangFaction] ?? 0) > 0;
   const gcfg: Partial<GangConfig> = { mode: needRep ? "respect" : "money", ...dcfg.gang };
+  // no equipment shopping while casino.js is betting (it needs the money to stay put)
+  if (ns.isRunning(SCRIPTS.casinoTable, "home")) Object.assign(gcfg, { equipBudget: 0, augBudget: 0 });
   writeJson(ns, DATA.gangConfig, gcfg);
   if (!ns.isRunning(SCRIPTS.gangManager, "home") && ns.exec(SCRIPTS.gangManager, "home"))
     event("gang", `started gang manager (${gcfg.mode} mode)`);
@@ -263,7 +269,7 @@ async function factionsModule(
 
   const act: ActArgs = { join: p.join, travelTo: p.travelTo, work: p.work, crime: p.crime, buyNow: p.buyNow };
   // casino.js drives the UI (blackjack table); work/travel would navigate away from it
-  const casinoRunning = ns.isRunning(SCRIPTS.casino, "home");
+  const casinoRunning = ns.isRunning(SCRIPTS.casinoTable, "home");
   if (casinoRunning) {
     act.work = null;
     act.crime = null;
@@ -286,7 +292,15 @@ async function factionsModule(
     try {
       const targets = p.grindFactions;
       const needKarma = !data.gangFaction && data.karma > GANG_KARMA;
-      const rep = await manageSleeves(ns, data, targets, p.favorFactions, act.work?.faction ?? null, needKarma);
+      const rep = await manageSleeves(
+        ns,
+        data,
+        targets,
+        p.favorFactions,
+        act.work?.faction ?? null,
+        needKarma,
+        casinoRunning ? 0 : undefined, // no sleeve aug purchases while casino.js is betting
+      );
       for (const c of rep.changed) event("sleeve", c);
       if (rep.augsBought) event("sleeve", `bought ${rep.augsBought} sleeve augmentation(s)`);
       sleeveSummary = summarizeSleeves(rep.assignments);
