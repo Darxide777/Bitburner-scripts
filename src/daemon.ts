@@ -36,6 +36,8 @@ interface DaemonConfig {
   plan: Partial<PlanConfig>;
   manageSleeves: boolean;
   manageGang: boolean;
+  /** Auto-run casino.js early in a run (see casinoModule). */
+  casino: boolean;
   /** Overrides for the gang manager (see lib/plan/gang.ts DEFAULT_GANG); mode is set automatically unless given. */
   gang: Partial<GangConfig>;
 }
@@ -47,6 +49,7 @@ const DEFAULTS: DaemonConfig = {
   plan: {},
   manageSleeves: true,
   manageGang: true,
+  casino: true,
   gang: {},
 };
 
@@ -100,6 +103,9 @@ export async function main(ns: NS): Promise<void> {
     }
     const s = tracker.latest();
     const m = tracker.metrics();
+
+    // ---- casino ($10b per install, early in a run) ----
+    if (s && cfg.casino) casinoModule(ns, s, m, event);
 
     // ---- hacking manager ----
     const reserve = homeReserve(ns, s?.gang && cfg.manageGang ? [SCRIPTS.gangManager] : []);
@@ -166,6 +172,23 @@ function homeReserve(ns: NS, wanted: string[] = []): number {
   const home = ns.getServerMaxRam("home");
   // never reserve more than half of home
   return Math.min(home / 2, biggest + 8 + pendingStart);
+}
+
+const CASINO_CAP = 10e9;
+
+/**
+ * Start casino.js when this install's $10b casino allowance is unclaimed and normal income
+ * would take more than 30 minutes to make that much — i.e. at the start of a BitNode, not late game.
+ * casino.js records its outcome per install, so a failed attempt isn't retried every tick.
+ */
+function casinoModule(ns: NS, s: Snapshot, m: Metrics, event: (k: string, msg: string, d?: unknown) => void) {
+  if (ns.isRunning(SCRIPTS.casino, "home")) return;
+  if ((s.earned.casino ?? 0) >= CASINO_CAP) return;
+  const income = Math.max(m.short.income, m.long.income);
+  if (income * 1800 >= CASINO_CAP) return;
+  const last = readJson<{ lastAugReset?: number }>(ns, DATA.casino, {});
+  if (last.lastAugReset === s.lastAugReset) return;
+  if (ns.exec(SCRIPTS.casino, "home")) event("casino", "started blackjack save-scummer for the $10b casino allowance");
 }
 
 const TRAVEL_COOLDOWN_MS = 120_000;
@@ -239,6 +262,13 @@ async function factionsModule(
   }
 
   const act: ActArgs = { join: p.join, travelTo: p.travelTo, work: p.work, crime: p.crime, buyNow: p.buyNow };
+  // casino.js drives the UI (blackjack table); work/travel would navigate away from it
+  const casinoRunning = ns.isRunning(SCRIPTS.casino, "home");
+  if (casinoRunning) {
+    act.work = null;
+    act.crime = null;
+    act.travelTo = null;
+  }
   // the planner is stateless; a cooldown stops it from bouncing between cities
   if (act.travelTo) {
     if (Date.now() - lastTravel < TRAVEL_COOLDOWN_MS) act.travelTo = null;
@@ -272,7 +302,7 @@ async function factionsModule(
   if (p.backdoor.length && spawnTask(ns, "tasks/backdoor.js", [p.backdoor[0]]))
     event("backdoor", `installing backdoor on ${p.backdoor[0]}`);
 
-  if (p.install) {
+  if (p.install && !casinoRunning) {
     event("install", `install planned: ${p.install.reason}`, {
       buy: p.install.buy.map(([, a]) => a),
       cost: p.readyCost,

@@ -10,12 +10,14 @@ export const DATA = {
   hack: "data/hack.txt", // hacking manager status
   gang: "data/gang.txt", // gang manager status
   gangConfig: "data/gang-config.txt", // gang tunables, written by the daemon
+  casino: "data/casino.txt", // casino.js outcome for the current install
 } as const;
 
 export const SCRIPTS = {
   daemon: "daemon.js",
   hackManager: "hack/manager.js",
   gangManager: "gang/manager.js",
+  casino: "casino.js",
   hack: "hack/w/h.js",
   grow: "hack/w/g.js",
   weaken: "hack/w/w.js",

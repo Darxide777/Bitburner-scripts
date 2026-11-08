@@ -47,7 +47,8 @@ daemon.js                 orchestrator: telemetry → metrics → planner module
 ├─ tmp/call/*.js          generated one-function proxies (see lib/call.ts)
 ├─ hack/manager.js        long-running HWGW batcher across every rooted server's RAM
 │   └─ hack/w/{h,g,w,s}.js  minimal workers (hack/grow/weaken/share)
-└─ gang/manager.js        long-running gang manager, ticks on every gang update
+├─ gang/manager.js        long-running gang manager, ticks on every gang update
+└─ casino.js              blackjack save-scummer for the casino's $10b-per-install allowance
 lib/                      task runner, call proxy, metrics, network, file IO, formatting
 lib/plan/                 faction/aug data collection, requirement evaluator, planner
 ```
@@ -105,6 +106,15 @@ Homicide (Mug while Homicide would mostly fail), which minimizes time-to-gang. O
 grindable faction gets its best-suited sleeve, never the faction the player is working for.
 Leftover sleeves recover from shock or do crime. Cheap sleeve augs are bought as shock reaches 0.
 
+**Casino** (`casino.ts`). The casino has no API, so this drives the blackjack UI through the DOM
+(25 GB while it runs). Loop: save → play a hand with basic strategy → on a loss, reload the
+page, which restores the save and restarts the script. Bets are min($100m, money). It stops
+when casino winnings since the last install reach $10b; past that the casino only bans you.
+The cap resets every install. The daemon starts it automatically when the allowance is
+unclaimed and normal income would take >30 min to make $10b (start of a BitNode). While it
+runs, the daemon leaves work, travel, and installs alone so the table stays on screen.
+Turn it off with `"casino": false`.
+
 Tune it in `data/config.txt`, e.g. `{"plan": {"installPatience": 0.4, "weights": {"faction_rep": 5}}}`.
 Other keys: `"manageSleeves"`, `"manageGang"` (booleans), and `"gang"` (overrides for `DEFAULT_GANG`;
 setting `"mode"` there pins it).
@@ -134,6 +144,7 @@ faction-working.
 - [x] Factions & augments: invites with city conflicts, travel, backdoors, rep-grind choice,
       escalation-aware purchase order, donations, NeuroFlux, install timing, w0r1dd43m0n
 - [ ] Learn install timing from `runs.txt` history instead of fixed `installPatience`
+- [x] Casino: blackjack save-scumming for $10b per install
 - [ ] Company work → megacorp factions (ECorp, MegaCorp, KuaiGong, NWO, …)
 - [ ] Hacking-XP mode when the hack level gates the next faction or w0r1dd43m0n
 - [ ] Move the remaining recurring tasks onto the call proxy to shrink the home reserve
