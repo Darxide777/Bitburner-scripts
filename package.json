@@ -1,0 +1,18 @@
+{
+  "name": "bitburner-scripts",
+  "version": "0.1.0",
+  "description": "Self-optimizing full-game automation for Bitburner (written from scratch).",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p .",
+    "typecheck": "tsc -p . --noEmit",
+    "defs": "node tools/fix-defs.mjs",
+    "dev": "node tools/sync.mjs",
+    "sync": "node tools/sync.mjs --no-watch-build"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "ws": "8.18.3"
+  }
+}
