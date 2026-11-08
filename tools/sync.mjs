@@ -3,8 +3,8 @@
 // The game is the WebSocket *client*: in-game, go to Options → Remote API, set the
 // port (default here: 12525) and press Connect. This server then:
 //   1. runs `tsc --watch` (unless --no-watch-build) so src/**/*.ts → dist/**/*.js
-//   2. pushes every file in dist/ to the game's "home" server on connect, and any
-//      changed file after that; deletes files removed from dist/
+//   2. keeps home in sync with dist/: pushes new/changed files within ~1s, and
+//      deletes files it pushed earlier once they've been gone from dist/ for ~5s
 //   3. refreshes types/NetscriptDefinitions.d.ts from the running game, so the
 //      types always match the game version you actually play
 //   4. every PULL_INTERVAL ms, pulls the automation's telemetry files (data/*.txt
@@ -15,7 +15,7 @@
 // src/RemoteFileAPI/MessageHandlers.ts.
 import { WebSocketServer } from "ws";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, watch, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { exportAll } from "./fix-defs.mjs";
 
@@ -96,25 +96,51 @@ const MANIFEST = ".sync-manifest.json";
 const manifest = new Set(existsSync(MANIFEST) ? JSON.parse(readFileSync(MANIFEST, "utf8")) : []);
 const saveManifest = () => writeFileSync(MANIFEST, JSON.stringify([...manifest].sort(), null, 1));
 
-async function pushAll() {
-  const files = walk(DIST).filter(pushable);
-  for (const f of files) await push(f);
-  // delete game-side files we pushed in the past but no longer build
-  const ours = new Set(files.map(gamePath));
+// Reconciliation instead of trusting file-watcher events: fs.watch silently stops
+// reporting when the watched directory is deleted and recreated (e.g. `rm -rf dist`
+// + rebuild), which once left the game with half a build. Polling ~30 small files a
+// second is cheap, and a file is only deleted in-game after it has been absent
+// from dist/ for STALE_CHECKS consecutive passes, so rebuilds never delete anything.
+const STALE_CHECKS = 5;
+const missing = new Map(); // game path -> consecutive passes absent from dist/
+let reconciling = false;
+
+async function reconcile() {
+  if (!socket || reconciling) return;
+  reconciling = true;
   try {
+    // what is actually on home: anything missing there gets re-pushed even if unchanged locally
     const remote = new Set((await rpc("getFileNames", { server: "home" })).map((f) => f.replace(/^\//, "")));
-    for (const f of [...manifest]) {
-      if (ours.has(f)) continue;
+    const files = walk(DIST).filter(pushable);
+    for (const f of files) {
+      if (!remote.has(gamePath(f))) lastPushed.delete(gamePath(f));
+      await push(f);
+    }
+    const ours = new Set(files.map(gamePath));
+    for (const f of ours) missing.delete(f);
+    const stale = [...manifest].filter((f) => !ours.has(f));
+    if (!stale.length) return;
+    const due = stale.filter((f) => {
+      const n = (missing.get(f) ?? 0) + 1;
+      missing.set(f, n);
+      return n >= STALE_CHECKS;
+    });
+    if (!due.length) return;
+    for (const f of due) {
       if (remote.has(f)) {
         await rpc("deleteFile", { server: "home", filename: f });
         log("deleted stale", f);
       }
       manifest.delete(f);
+      missing.delete(f);
+      lastPushed.delete(f);
     }
+    saveManifest();
   } catch (e) {
-    log("stale-file sweep failed:", e.message);
+    log("reconcile failed:", e.message);
+  } finally {
+    reconciling = false;
   }
-  saveManifest();
 }
 
 async function refreshDefinitions() {
@@ -154,6 +180,7 @@ const wss = new WebSocketServer({ port: PORT });
 log(`listening on ws://localhost:${PORT} — in game: Options → Remote API → port ${PORT} → Connect`);
 
 let pullTimer = null;
+let reconcileTimer = null;
 wss.on("connection", async (ws) => {
   if (socket) socket.close();
   socket = ws;
@@ -174,38 +201,17 @@ wss.on("connection", async (ws) => {
   ws.on("close", () => {
     if (socket === ws) socket = null;
     clearInterval(pullTimer);
+    clearInterval(reconcileTimer);
     lastPushed.clear();
     log("game disconnected");
   });
   await refreshDefinitions();
-  await pushAll();
+  await reconcile();
   await pullLogs();
   clearInterval(pullTimer);
+  clearInterval(reconcileTimer);
   pullTimer = setInterval(pullLogs, PULL_INTERVAL);
+  reconcileTimer = setInterval(reconcile, 1000);
 });
 
-// ---------- watch dist ----------
 mkdirSync(DIST, { recursive: true });
-const debounce = new Map();
-watch(DIST, { recursive: true }, (_event, name) => {
-  if (!name) return;
-  const local = join(DIST, name);
-  if (!pushable(local)) return;
-  clearTimeout(debounce.get(local));
-  debounce.set(
-    local,
-    setTimeout(async () => {
-      if (!socket) return;
-      if (existsSync(local)) await push(local);
-      else {
-        try {
-          await rpc("deleteFile", { server: "home", filename: gamePath(local) });
-          lastPushed.delete(gamePath(local));
-          manifest.delete(gamePath(local));
-          saveManifest();
-          log("deleted", gamePath(local));
-        } catch {}
-      }
-    }, 150),
-  );
-});
