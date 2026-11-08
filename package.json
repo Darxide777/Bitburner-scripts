@@ -9,7 +9,8 @@
     "typecheck": "tsc -p . --noEmit",
     "defs": "node tools/fix-defs.mjs",
     "dev": "node tools/sync.mjs",
-    "sync": "node tools/sync.mjs --no-watch-build"
+    "sync": "node tools/sync.mjs --no-watch-build",
+    "test": "tsc -p . && node --test test/*.test.mjs"
   },
   "devDependencies": {
     "typescript": "5.9.3",

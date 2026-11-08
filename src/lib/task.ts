@@ -65,3 +65,15 @@ export async function task<T>(ns: NS, body: (args: ScriptArg[]) => T | Promise<T
   }
   ns.write(String(out), JSON.stringify(env, replacer), "w");
 }
+
+/**
+ * Start a task without waiting for it (for long-running work like backdoors, or
+ * tasks that never return like install). Returns the pid, or 0 if it couldn't start.
+ * Skips if the same task script is already running.
+ */
+export function spawnTask(ns: NS, script: string, args: ScriptArg[] = []): number {
+  if (!ns.fileExists(script, "home")) return 0;
+  for (const p of ns.ps("home")) if (p.filename === script) return 0;
+  const out = `${TASK_DIR}/${script.replace(/[/.]/g, "_")}.txt`;
+  return ns.exec(script, "home", { threads: 1, temporary: true }, out, ...args);
+}

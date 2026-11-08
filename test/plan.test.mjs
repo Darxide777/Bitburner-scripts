@@ -1,0 +1,130 @@
+// Planner unit tests (run against the compiled output: `npm test`).
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { plan, escalatedCost, purchaseOrder, augValue, DEFAULT_PLAN } from "../dist/lib/plan/factions.js";
+
+const fac = (o = {}) => ({
+  joined: false, invited: false, rep: 0, favor: 0, favorGain: 0, enemies: [], workTypes: [],
+  bestWork: null, workRepPerSec: 0, augs: [], requirements: [], ...o,
+});
+const aug = (o = {}) => ({ price: 1e6, repReq: 1e3, prereqs: [], factions: [], stats: {}, ...o });
+const CITY_ENEMIES = { "Sector-12": ["Chongqing", "New Tokyo", "Ishima", "Volhaven"], Chongqing: ["Sector-12", "Aevum", "Volhaven"] };
+
+function world(over = {}) {
+  return {
+    t: 0, money: 2e6, hackLevel: 100, skills: { hacking: 100 }, karma: 0, kills: 0, city: "Sector-12", node: 12,
+    sourceFiles: {}, installed: [], queued: [], favorToDonate: 150, repPerDollar: 1e-6, priceMult: 1.9,
+    hasNeuroreceptor: false, gangFaction: null, files: ["BruteSSH.exe"], backdoors: {}, backdoorable: ["avmnite-02h"],
+    jobs: {}, worldDaemon: { exists: false, rooted: false, reqHack: 0 },
+    factions: {
+      CyberSec: fac({ joined: true, rep: 5000, workTypes: ["hacking"], bestWork: "hacking", workRepPerSec: 10, augs: ["HackA", "RepB", "NeuroFlux Governor"] }),
+      "Sector-12": fac({ invited: true, enemies: CITY_ENEMIES["Sector-12"], augs: ["CashRoot", "NeuroFlux Governor"] }),
+      Chongqing: fac({ enemies: CITY_ENEMIES.Chongqing, augs: ["Neuregen"],
+        requirements: [{ type: "city", city: "Chongqing" }, { type: "money", money: 20e6 }] }),
+      "Tian Di Hui": fac({ augs: ["TDH-Aug"], requirements: [
+        { type: "money", money: 1e6 }, { type: "skills", skills: { hacking: 50 } },
+        { type: "someCondition", conditions: [{ type: "city", city: "Chongqing" }, { type: "city", city: "New Tokyo" }] },
+      ] }),
+      NiteSec: fac({ augs: ["NiteAug"], requirements: [{ type: "backdoorInstalled", server: "avmnite-02h" }] }),
+    },
+    augs: {
+      HackA: aug({ repReq: 10_000, price: 1e6, factions: ["CyberSec"], stats: { hacking: 1.05 } }),
+      RepB: aug({ repReq: 2_000, price: 5e5, factions: ["CyberSec"], stats: { faction_rep: 1.1 } }),
+      CashRoot: aug({ repReq: 12_500, price: 1.25e5, factions: ["Sector-12"] }),
+      Neuregen: aug({ factions: ["Chongqing"], stats: { hacking_exp: 1.4 } }),
+      "TDH-Aug": aug({ factions: ["Tian Di Hui"], stats: { faction_rep: 1.2 } }),
+      NiteAug: aug({ factions: ["NiteSec"], stats: { hacking: 1.1 } }),
+      "NeuroFlux Governor": aug({ factions: ["CyberSec", "Sector-12"], stats: { hacking: 1.01 } }),
+    },
+    ...over,
+  };
+}
+const input = (data, o = {}) => ({ data, observedRep: {}, income: 1e4, sinceInstall: 30 * 60_000, ...o });
+
+test("escalated cost buys most expensive first", () => {
+  assert.equal(escalatedCost([1, 10], 2), 10 + 1 * 2);
+  assert.equal(escalatedCost([10, 1], 2), 12);
+});
+
+test("aug value weights rep and hacking, never zero", () => {
+  assert.ok(augValue({ faction_rep: 1.1 }, DEFAULT_PLAN.weights) > augValue({ hacking: 1.05 }, DEFAULT_PLAN.weights));
+  assert.ok(augValue({}, DEFAULT_PLAN.weights) > 0);
+});
+
+test("does not join a city faction worth less than its enemies", () => {
+  const p = plan(input(world()));
+  assert.ok(!p.join.includes("Sector-12"), `joined: ${p.join}`);
+});
+
+test("joins a city faction worth more than its enemies", () => {
+  const w = world();
+  w.augs.CashRoot.stats = { faction_rep: 1.5 };
+  assert.ok(plan(input(w)).join.includes("Sector-12"));
+});
+
+test("works for the faction that gates the next valuable aug", () => {
+  const p = plan(input(world()));
+  assert.deepEqual(p.work, { faction: "CyberSec", type: "hacking", focus: true });
+});
+
+test("rep-ready, affordable augs are 'ready'; rep-gated ones are pending", () => {
+  const p = plan(input(world()));
+  assert.deepEqual(p.ready.map((c) => c.aug), ["RepB"]);
+  assert.ok(p.pending.some((c) => c.aug === "HackA" && c.repGap === 5000));
+});
+
+test("travels when a city is the only missing requirement", () => {
+  const p = plan(input(world()));
+  assert.equal(p.travelTo, "Chongqing");
+});
+
+test("backdoors a server that gates a wanted faction", () => {
+  assert.deepEqual(plan(input(world())).backdoor, ["avmnite-02h"]);
+});
+
+test("no install with too few augs and short wait", () => {
+  assert.equal(plan(input(world())).install, null);
+});
+
+test("installs when the next aug is far away relative to run time", () => {
+  const w = world({ money: 1e12 });
+  for (const n of ["A1", "A2", "A3", "A4"]) {
+    w.augs[n] = aug({ repReq: 0, price: 1e6, factions: ["CyberSec"], stats: { hacking: 1.02 } });
+    w.factions.CyberSec.augs.push(n);
+  }
+  w.augs.HackA.repReq = 1e9; // ~27 hours of work away
+  const p = plan(input(w, { sinceInstall: 60 * 60_000 }));
+  assert.ok(p.install, "expected an install");
+  assert.match(p.install.reason, /next aug/);
+  // purchase order: most expensive first
+  const prices = p.install.buy.map(([, a]) => w.augs[a].price);
+  assert.deepEqual(prices, [...prices].sort((a, b) => b - a));
+});
+
+test("prerequisites are bought before dependents even if cheaper", () => {
+  const w = world();
+  w.augs.Big = aug({ price: 1e9, prereqs: ["Small"] });
+  w.augs.Small = aug({ price: 1 });
+  assert.deepEqual(purchaseOrder(["Big", "Small"], w), ["Small", "Big"]);
+});
+
+test("donation covers the rep gap when favor allows", () => {
+  const w = world({ money: 1e12 });
+  w.factions.CyberSec.favor = 200;
+  const p = plan(input(w));
+  const hack = p.ready.find((c) => c.aug === "HackA");
+  assert.ok(hack && hack.donation > 0, "HackA should be bought via donation");
+});
+
+test("never works for or plans around Shadows of Anarchy", () => {
+  const w = world();
+  w.factions["Shadows of Anarchy"] = fac({ joined: true, rep: 1e9, augs: ["SoA"] });
+  w.augs.SoA = aug({ repReq: 0, factions: ["Shadows of Anarchy"], stats: { faction_rep: 3 } });
+  const p = plan(input(w));
+  assert.ok(!p.ready.some((c) => c.aug === "SoA"));
+});
+
+test("destroys w0r1dd43m0n when ready", () => {
+  const w = world({ installed: ["The Red Pill"], hackLevel: 5000, worldDaemon: { exists: true, rooted: true, reqHack: 3000 } });
+  assert.equal(plan(input(w)).destroy, true);
+});

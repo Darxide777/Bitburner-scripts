@@ -15,24 +15,37 @@ import { appendJsonl, readJson, writeJson } from "./lib/io.js";
 import { MetricsTracker, type Metrics } from "./lib/metrics.js";
 import { allHosts, portOpenerCount, rootAll } from "./lib/net.js";
 import { DATA, GANG_KARMA, SCRIPTS } from "./lib/paths.js";
-import { runTask } from "./lib/task.js";
+import { collectFactionData } from "./lib/plan/collect.js";
+import type { FactionData } from "./lib/plan/data.js";
+import { DEFAULT_PLAN, plan as makePlan, type Plan, type PlanConfig } from "./lib/plan/factions.js";
+import { runTask, spawnTask } from "./lib/task.js";
 import type { Snapshot } from "./lib/types.js";
 import type { HackConfig } from "./hack/manager.js";
+import type { ActArgs } from "./tasks/factions-act.js";
 
 interface DaemonConfig {
   tickMs: number;
-  /** Fraction of current money the economy module may spend per run. */
-  infraSpend: number;
+  /** Fraction of current money the economy module may spend per run (null = let the planner decide). */
+  infraSpend: number | null;
   economyEveryMs: number;
+  factionsEveryMs: number;
+  /** Overrides for the faction/augment planner (see lib/plan/factions.ts DEFAULT_PLAN). */
+  plan: Partial<PlanConfig>;
 }
-const DEFAULTS: DaemonConfig = { tickMs: 2000, infraSpend: 0.5, economyEveryMs: 10_000 };
+const DEFAULTS: DaemonConfig = {
+  tickMs: 2000,
+  infraSpend: null,
+  economyEveryMs: 10_000,
+  factionsEveryMs: 15_000,
+  plan: {},
+};
 
 interface DaemonState {
   lastAugReset: number;
   lastNodeReset: number;
   installs: number;
   /** Peak values of the run in progress, summarized into data/runs.txt on reset. */
-  run: { start: number; peakIncome: number; peakRepRate: number; hackLevel: number; augsInstalled: number };
+  cur: { start: number; peakIncome: number; peakRepRate: number; hackLevel: number; augsInstalled: number };
 }
 
 const STATE_FILE = "data/daemon-state.txt";
@@ -45,7 +58,10 @@ export async function main(ns: NS): Promise<void> {
   const tracker = new MetricsTracker();
   const recent: string[] = [];
   let lastEconomy = 0;
+  let lastFactions = 0;
   let lastMetricsLine = 0;
+  let current: Plan | null = null;
+  let lastNotes = "";
   let lastError = "";
 
   const event = (kind: string, msg: string, data?: unknown) => {
@@ -88,36 +104,113 @@ export async function main(ns: NS): Promise<void> {
       if (pid) event("hack", "started hacking manager");
     }
 
+    // ---- factions & augmentations ----
+    if (s && Date.now() - lastFactions > cfg.factionsEveryMs) {
+      lastFactions = Date.now();
+      current = await factionsModule(ns, s, m, { ...DEFAULT_PLAN, ...cfg.plan }, event) ?? current;
+      const notes = current?.notes.join("; ") ?? "";
+      if (notes && notes !== lastNotes) event("plan", notes);
+      lastNotes = notes;
+    }
+
     // ---- economy ----
     if (s && Date.now() - lastEconomy > cfg.economyEveryMs) {
       lastEconomy = Date.now();
-      const r = await runTask<string[]>(ns, "tasks/economy.js", [s.money * cfg.infraSpend]);
+      const spend = cfg.infraSpend ?? current?.infraSpend ?? 0.5;
+      const r = await runTask<string[]>(ns, "tasks/economy.js", [s.money * spend]);
       if (r.ok) for (const a of r.value ?? []) event("buy", a);
       else if (r.reason !== "ram") event("error", `economy failed: ${r.error}`);
     }
 
     // ---- persistence ----
     if (s) {
-      const hack = readJson<{ expectedPerSec?: number; poolTotal?: number }>(ns, DATA.hack, {});
-      writeJson(ns, DATA.status, { snapshot: s, metrics: m, hack });
+      const hackStatus = readJson<{ expectedPerSec?: number; poolTotal?: number }>(ns, DATA.hack, {});
+      writeJson(ns, DATA.status, { snapshot: s, metrics: m, hack: hackStatus, plan: current });
       if (Date.now() - lastMetricsLine > 60_000) {
         lastMetricsLine = Date.now();
-        appendJsonl(ns, DATA.metrics, metricsLine(s, m, hack), 10_000);
+        appendJsonl(ns, DATA.metrics, metricsLine(s, m, hackStatus), 10_000);
       }
-      draw(ns, s, m, hack, recent);
+      draw(ns, s, m, hackStatus, current, recent);
     }
 
     await ns.sleep(cfg.tickMs);
   }
 }
 
-/** RAM to keep free on home for tasks: the biggest task + headroom. */
+/** Kill everything on home except the daemon (before install/destroy, which wipe scripts anyway). */
+function freeHome(ns: NS): void {
+  for (const proc of ns.ps("home")) if (proc.pid !== ns.pid) ns.kill(proc.pid);
+}
+
+/** Tasks that only run right before a reset; they get RAM by freeing home instead of a permanent reserve. */
+const ONE_OFF_TASKS = ["tasks/install.js", "tasks/destroy.js"];
+
+/** RAM to keep free on home for tasks: the biggest frequently-run task + headroom. */
 function homeReserve(ns: NS): number {
-  const tasks = ns.ls("home", "tasks/").filter((f) => f.endsWith(".js"));
+  const tasks = ns.ls("home", "tasks/").filter((f) => f.endsWith(".js") && !ONE_OFF_TASKS.includes(f));
   const biggest = Math.max(0, ...tasks.map((t) => ns.getScriptRam(t, "home")));
   const home = ns.getServerMaxRam("home");
   // never reserve more than half of home
   return Math.min(home / 2, biggest + 8);
+}
+
+const TRAVEL_COOLDOWN_MS = 120_000;
+let lastTravel = 0;
+
+/** Scan factions/augs, plan, and act on the plan. Returns the plan (or null if the scan failed). */
+async function factionsModule(
+  ns: NS,
+  s: Snapshot,
+  m: Metrics,
+  cfg: PlanConfig,
+  event: (k: string, msg: string, d?: unknown) => void,
+): Promise<Plan | null> {
+  let data: FactionData;
+  try {
+    data = await collectFactionData(ns);
+  } catch (e) {
+    event("error", `faction scan failed: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
+  }
+  const r = m.long.window >= 120_000 ? m.long : m.short;
+  const p = makePlan({ data, observedRep: r.rep, income: r.income, sinceInstall: m.sinceInstall }, cfg);
+
+  if (p.destroy) {
+    event("destroy", "w0r1dd43m0n is ready — destroying the BitNode");
+    freeHome(ns);
+    spawnTask(ns, "tasks/destroy.js", [cfg.nextNode]);
+    return p;
+  }
+
+  const act: ActArgs = { join: p.join, travelTo: p.travelTo, work: p.work, crime: p.crime, buyNow: p.buyNow };
+  // the planner is stateless; a cooldown stops it from bouncing between cities
+  if (act.travelTo) {
+    if (Date.now() - lastTravel < TRAVEL_COOLDOWN_MS) act.travelTo = null;
+    else lastTravel = Date.now();
+  }
+  // don't fight the player over work while a gang/crime module isn't steering it
+  if (!cfg.manageWork) {
+    act.work = null;
+    act.crime = null;
+  }
+  const done = await runTask<string[]>(ns, "tasks/factions-act.js", [JSON.stringify(act)]);
+  if (done.ok) for (const d of done.value ?? []) event("faction", d);
+  else if (done.reason !== "ram") event("error", `faction actions failed: ${done.error}`);
+
+  if (p.backdoor.length && spawnTask(ns, "tasks/backdoor.js", [p.backdoor[0]]))
+    event("backdoor", `installing backdoor on ${p.backdoor[0]}`);
+
+  if (p.install) {
+    event("install", `install planned: ${p.install.reason}`, {
+      buy: p.install.buy.map(([, a]) => a),
+      cost: p.readyCost,
+      sinceInstall: m.sinceInstall,
+      money: s.money,
+    });
+    freeHome(ns);
+    spawnTask(ns, "tasks/install.js", [JSON.stringify(p.install)]);
+  }
+  return p;
 }
 
 function metricsLine(s: Snapshot, m: Metrics, hack: { expectedPerSec?: number; poolTotal?: number }) {
@@ -153,7 +246,7 @@ function trackRuns(ns: NS, s: Snapshot, tracker: MetricsTracker, event: (k: stri
       lastAugReset: s.lastAugReset,
       lastNodeReset: s.lastNodeReset,
       installs: 0,
-      run: { start: s.lastAugReset, peakIncome: 0, peakRepRate: 0, hackLevel: s.hackLevel, augsInstalled: s.augsInstalled },
+      cur: { start: s.lastAugReset, peakIncome: 0, peakRepRate: 0, hackLevel: s.hackLevel, augsInstalled: s.augsInstalled },
     } satisfies DaemonState);
     return;
   }
@@ -163,22 +256,22 @@ function trackRuns(ns: NS, s: Snapshot, tracker: MetricsTracker, event: (k: stri
       t: s.t,
       kind: nodeReset ? "node" : "install",
       node: s.node,
-      durationMs: s.lastAugReset - st.run.start,
-      peakIncomePerSec: st.run.peakIncome,
-      peakRepPerSec: st.run.peakRepRate,
-      endHackLevel: st.run.hackLevel,
-      augsBefore: st.run.augsInstalled,
+      durationMs: s.lastAugReset - st.cur.start,
+      peakIncomePerSec: st.cur.peakIncome,
+      peakRepPerSec: st.cur.peakRepRate,
+      endHackLevel: st.cur.hackLevel,
+      augsBefore: st.cur.augsInstalled,
       augsAfter: s.augsInstalled,
     });
-    event("reset", nodeReset ? "BitNode reset detected" : `augments installed (+${s.augsInstalled - st.run.augsInstalled})`);
+    event("reset", nodeReset ? "BitNode reset detected" : `augments installed (+${s.augsInstalled - st.cur.augsInstalled})`);
     st.installs++;
     st.lastAugReset = s.lastAugReset;
     st.lastNodeReset = s.lastNodeReset;
-    st.run = { start: s.lastAugReset, peakIncome: 0, peakRepRate: 0, hackLevel: s.hackLevel, augsInstalled: s.augsInstalled };
+    st.cur = { start: s.lastAugReset, peakIncome: 0, peakRepRate: 0, hackLevel: s.hackLevel, augsInstalled: s.augsInstalled };
   }
-  st.run.peakIncome = Math.max(st.run.peakIncome, r.income);
-  st.run.peakRepRate = Math.max(st.run.peakRepRate, r.repTotal);
-  st.run.hackLevel = s.hackLevel;
+  st.cur.peakIncome = Math.max(st.cur.peakIncome, r.income);
+  st.cur.peakRepRate = Math.max(st.cur.peakRepRate, r.repTotal);
+  st.cur.hackLevel = s.hackLevel;
   writeJson(ns, STATE_FILE, st);
 }
 
@@ -187,6 +280,7 @@ function draw(
   s: Snapshot,
   m: Metrics,
   hack: { expectedPerSec?: number; poolTotal?: number },
+  plan: Plan | null,
   recent: string[],
 ) {
   const r = m.long.window >= 120_000 ? m.long : m.short;
@@ -215,6 +309,16 @@ function draw(
     L.push(`karma ${num(s.karma)} / ${num(GANG_KARMA)}  (${num(r.karma)}/s)  →  time to gang ${dur(m.timeToGang)}`);
   }
   L.push(`sleeves ${s.sleeves}   kills ${s.kills}`);
+
+  if (plan) {
+    L.push("");
+    L.push(
+      `augs: ${plan.ready.length} ready (${money(plan.readyCost)})  ·  next in ${dur(plan.nextEta)}  ·  infra spend ${(plan.infraSpend * 100).toFixed(0)}%`,
+    );
+    for (const c of plan.pending.slice(0, 4))
+      L.push(`  ${pad(c.aug, 34)} ${pad(c.faction, 18)} ${pad(money(c.price), 9, true)}  ${dur(c.eta)}`);
+    if (plan.install) L.push(`  → installing: ${plan.install.reason}`);
+  }
 
   if (recent.length) {
     L.push("");
