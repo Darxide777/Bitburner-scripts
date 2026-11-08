@@ -150,7 +150,7 @@ export async function main(ns: NS): Promise<void> {
     // ---- persistence ----
     if (s) {
       const hackStatus = readJson<{ expectedPerSec?: number; poolTotal?: number }>(ns, DATA.hack, {});
-      writeJson(ns, DATA.status, { snapshot: s, metrics: m, hack: hackStatus, plan: current });
+      writeJson(ns, DATA.status, { snapshot: s, metrics: m, hack: hackStatus, plan: current, stanek: stanekStatus });
       if (Date.now() - lastMetricsLine > 60_000) {
         lastMetricsLine = Date.now();
         appendJsonl(ns, DATA.metrics, metricsLine(s, m, hackStatus), 10_000);
