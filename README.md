@@ -45,8 +45,9 @@ daemon.js                 orchestrator: telemetry → metrics → planner module
 │   ├─ install.js         buy planned augs → home RAM → NeuroFlux → install, restart daemon
 │   └─ destroy.js         destroy w0r1dd43m0n → next BN12
 ├─ tmp/call/*.js          generated one-function proxies (see lib/call.ts)
-└─ hack/manager.js        long-running HWGW batcher across every rooted server's RAM
-    └─ hack/w/{h,g,w,s}.js  minimal workers (hack/grow/weaken/share)
+├─ hack/manager.js        long-running HWGW batcher across every rooted server's RAM
+│   └─ hack/w/{h,g,w,s}.js  minimal workers (hack/grow/weaken/share)
+└─ gang/manager.js        long-running gang manager, ticks on every gang update
 lib/                      task runner, call proxy, metrics, network, file IO, formatting
 lib/plan/                 faction/aug data collection, requirement evaluator, planner
 ```
@@ -85,7 +86,28 @@ collects faction/aug state and the planner decides:
 - *destroy*: with The Red Pill installed and the hack level reached, destroy w0r1dd43m0n
   and start the next BN12.
 
+**Gang** (`lib/plan/gang.ts` decides, `gang/manager.ts` acts). At -54k karma the daemon creates
+the gang in the joined gang faction with the most valuable unowned augs. Every gang update:
+
+- recruits, and buys equipment cheapest-first: 1% of money per item, 5% for augmentations,
+  which survive ascension
+- trains members below a stat floor
+- puts a share of the strongest members on Territory Warfare until territory is 100%, and only
+  engages clashes once every remaining clash is ≥60% likely to be won
+- assigns everyone else the best task for the mode: **respect**, which becomes gang-faction rep,
+  while that faction still gates augs, otherwise **money**
+- cools down the least valuable workers when the wanted penalty passes 3%
+- ascends at most one member per update, once their multiplier gain clears a threshold that
+  shrinks as the multiplier grows
+
+**Sleeves** (`lib/plan/sleeves.ts`, `lib/sleeves.ts`). With no gang yet, every sleeve commits
+Homicide (Mug while Homicide would mostly fail), which minimizes time-to-gang. Otherwise each
+grindable faction gets its best-suited sleeve, never the faction the player is working for.
+Leftover sleeves recover from shock or do crime. Cheap sleeve augs are bought as shock reaches 0.
+
 Tune it in `data/config.txt`, e.g. `{"plan": {"installPatience": 0.4, "weights": {"faction_rep": 5}}}`.
+Other keys: `"manageSleeves"`, `"manageGang"` (booleans), and `"gang"` (overrides for `DEFAULT_GANG`;
+setting `"mode"` there pins it).
 
 **Hacking.** "Shotgun" HWGW: a target is only attacked from a prepped state (min security,
 max money). All batches for a cycle are exec'd in one synchronous burst, so the Formulas
@@ -115,8 +137,10 @@ faction-working.
 - [ ] Company work → megacorp factions (ECorp, MegaCorp, KuaiGong, NWO, …)
 - [ ] Hacking-XP mode when the hack level gates the next faction or w0r1dd43m0n
 - [ ] Move the remaining recurring tasks onto the call proxy to shrink the home reserve
-- [ ] Sleeves: shock recovery → sync → karma for the gang → faction/company work
-- [ ] Crime/karma path to a gang; gang manager (recruit, tasks, equipment, ascension, territory)
+- [x] Sleeves: karma for the gang, then one per grind faction; shock recovery; sleeve augs
+- [x] Gang: creation, recruit, equipment, training, respect/money mode, wanted control,
+      territory warfare, ascension
+- [ ] Gang: account for v3's install penalty on ascension multipliers (`getInstallResult`)
 - [ ] Hacknet servers + hash spending
 - [ ] Bladeburner (alternate win condition + rep)
 - [ ] Corporation, Stanek's Gift, IPvGO, coding contracts, stock market

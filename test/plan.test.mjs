@@ -128,3 +128,21 @@ test("destroys w0r1dd43m0n when ready", () => {
   const w = world({ installed: ["The Red Pill"], hackLevel: 5000, worldDaemon: { exists: true, rooted: true, reqHack: 3000 } });
   assert.equal(plan(input(w)).destroy, true);
 });
+
+test("grindFactions/repGated are complete even when pending is truncated to gang augs", () => {
+  const w = world();
+  w.gangFaction = "Tetrads";
+  w.factions.Tetrads = fac({ joined: true, rep: 0, augs: [] });
+  for (let i = 0; i < 10; i++) {
+    w.augs[`T${i}`] = aug({ repReq: 1e9, factions: ["Tetrads"], stats: { faction_rep: 2 } }); // very valuable, gang-gated
+    w.factions.Tetrads.augs.push(`T${i}`);
+  }
+  // gang respect produces Tetrads rep fast, so its (valuable) augs top the truncated display list
+  w.augs.HackA.repReq = 1e12;
+  w.augs.RepB.repReq = 1e12;
+  const p = plan(input(w, { observedRep: { Tetrads: 1e6 } }));
+  assert.ok(p.pending.slice(0, 8).every((c) => c.faction === "Tetrads"), "display list is all gang augs");
+  assert.deepEqual(p.grindFactions, ["CyberSec"]);
+  assert.equal(p.repGated.Tetrads, 10);
+  assert.match(p.notes.join(" "), /CyberSec/);
+});

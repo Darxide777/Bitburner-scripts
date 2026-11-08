@@ -15,9 +15,12 @@ import { appendJsonl, readJson, writeJson } from "./lib/io.js";
 import { MetricsTracker, type Metrics } from "./lib/metrics.js";
 import { allHosts, portOpenerCount, rootAll } from "./lib/net.js";
 import { DATA, GANG_KARMA, SCRIPTS } from "./lib/paths.js";
+import { call } from "./lib/call.js";
 import { collectFactionData } from "./lib/plan/collect.js";
-import type { FactionData } from "./lib/plan/data.js";
-import { DEFAULT_PLAN, plan as makePlan, type Plan, type PlanConfig } from "./lib/plan/factions.js";
+import { NFG, type FactionData } from "./lib/plan/data.js";
+import { augValue, DEFAULT_PLAN, plan as makePlan, type Plan, type PlanConfig } from "./lib/plan/factions.js";
+import type { GangConfig } from "./lib/plan/gang.js";
+import { manageSleeves } from "./lib/sleeves.js";
 import { runTask, spawnTask } from "./lib/task.js";
 import type { Snapshot } from "./lib/types.js";
 import type { HackConfig } from "./hack/manager.js";
@@ -31,6 +34,10 @@ interface DaemonConfig {
   factionsEveryMs: number;
   /** Overrides for the faction/augment planner (see lib/plan/factions.ts DEFAULT_PLAN). */
   plan: Partial<PlanConfig>;
+  manageSleeves: boolean;
+  manageGang: boolean;
+  /** Overrides for the gang manager (see lib/plan/gang.ts DEFAULT_GANG); mode is set automatically unless given. */
+  gang: Partial<GangConfig>;
 }
 const DEFAULTS: DaemonConfig = {
   tickMs: 2000,
@@ -38,6 +45,9 @@ const DEFAULTS: DaemonConfig = {
   economyEveryMs: 10_000,
   factionsEveryMs: 15_000,
   plan: {},
+  manageSleeves: true,
+  manageGang: true,
+  gang: {},
 };
 
 interface DaemonState {
@@ -92,7 +102,7 @@ export async function main(ns: NS): Promise<void> {
     const m = tracker.metrics();
 
     // ---- hacking manager ----
-    const reserve = homeReserve(ns);
+    const reserve = homeReserve(ns, s?.gang && cfg.manageGang ? [SCRIPTS.gangManager] : []);
     const hackCfg: Partial<HackConfig> = {
       homeReserve: reserve,
       // lend spare RAM to factions while we are working for one
@@ -107,7 +117,7 @@ export async function main(ns: NS): Promise<void> {
     // ---- factions & augmentations ----
     if (s && Date.now() - lastFactions > cfg.factionsEveryMs) {
       lastFactions = Date.now();
-      current = await factionsModule(ns, s, m, { ...DEFAULT_PLAN, ...cfg.plan }, event) ?? current;
+      current = (await factionsModule(ns, s, m, cfg, { ...DEFAULT_PLAN, ...cfg.plan }, event)) ?? current;
       const notes = current?.notes.join("; ") ?? "";
       if (notes && notes !== lastNotes) event("plan", notes);
       lastNotes = notes;
@@ -146,22 +156,68 @@ function freeHome(ns: NS): void {
 const ONE_OFF_TASKS = ["tasks/install.js", "tasks/destroy.js"];
 
 /** RAM to keep free on home for tasks: the biggest frequently-run task + headroom. */
-function homeReserve(ns: NS): number {
+function homeReserve(ns: NS, wanted: string[] = []): number {
   const tasks = ns.ls("home", "tasks/").filter((f) => f.endsWith(".js") && !ONE_OFF_TASKS.includes(f));
   const biggest = Math.max(0, ...tasks.map((t) => ns.getScriptRam(t, "home")));
+  // long-running managers that should be up but aren't: hold their RAM back so they can start
+  const pendingStart = wanted
+    .filter((f) => !ns.isRunning(f, "home"))
+    .reduce((sum, f) => sum + ns.getScriptRam(f, "home"), 0);
   const home = ns.getServerMaxRam("home");
   // never reserve more than half of home
-  return Math.min(home / 2, biggest + 8);
+  return Math.min(home / 2, biggest + 8 + pendingStart);
 }
 
 const TRAVEL_COOLDOWN_MS = 120_000;
 let lastTravel = 0;
+let sleeveSummary = "";
+
+/** Factions that can host a gang (combat ones first: territory, better augs for rep play). */
+const GANG_FACTIONS = [
+  "Speakers for the Dead",
+  "The Dark Army",
+  "The Syndicate",
+  "Tetrads",
+  "Slum Snakes",
+  "The Black Hand",
+  "NiteSec",
+];
+
+/** Create the gang when karma allows, keep the manager running, and steer its mode. */
+async function gangModule(ns: NS, data: FactionData, p: Plan, dcfg: DaemonConfig, event: (k: string, msg: string, d?: unknown) => void) {
+  if (!data.gangFaction) {
+    if (data.karma > GANG_KARMA) return;
+    const owned = new Set([...data.installed, ...data.queued]);
+    const worth = (f: string) =>
+      (data.factions[f]?.augs ?? []).filter((a) => a !== NFG && !owned.has(a)).reduce((sum, a) => sum + augValue(data.augs[a]?.stats ?? {}, DEFAULT_PLAN.weights), 0);
+    const choice = GANG_FACTIONS.filter((f) => data.factions[f]?.joined).sort((a, b) => worth(b) - worth(a))[0];
+    if (!choice) return;
+    if (await call<boolean>(ns, "gang.createGang", choice)) event("gang", `created a gang with ${choice}`);
+    return;
+  }
+  // respect → gang-faction rep while it still gates augs we want; otherwise money
+  const needRep = (p.repGated[data.gangFaction] ?? 0) > 0;
+  const gcfg: Partial<GangConfig> = { mode: needRep ? "respect" : "money", ...dcfg.gang };
+  writeJson(ns, DATA.gangConfig, gcfg);
+  if (!ns.isRunning(SCRIPTS.gangManager, "home") && ns.exec(SCRIPTS.gangManager, "home"))
+    event("gang", `started gang manager (${gcfg.mode} mode)`);
+}
+
+function summarizeSleeves(list: { kind: string; faction?: string; crime?: string }[]): string {
+  const counts = new Map<string, number>();
+  for (const a of list) {
+    const k = a.kind === "faction" ? a.faction! : a.kind === "crime" ? a.crime! : "recovery";
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  return [...counts].map(([k, n]) => (n > 1 ? `${k} ×${n}` : k)).join(", ");
+}
 
 /** Scan factions/augs, plan, and act on the plan. Returns the plan (or null if the scan failed). */
 async function factionsModule(
   ns: NS,
   s: Snapshot,
   m: Metrics,
+  dcfg: DaemonConfig,
   cfg: PlanConfig,
   event: (k: string, msg: string, d?: unknown) => void,
 ): Promise<Plan | null> {
@@ -193,6 +249,22 @@ async function factionsModule(
     act.work = null;
     act.crime = null;
   }
+  if (dcfg.manageGang) await gangModule(ns, data, p, dcfg, event);
+
+  // sleeves first, so none of them is sitting on the faction the player is about to work for
+  if (dcfg.manageSleeves && s.sleeves > 0) {
+    try {
+      const targets = p.grindFactions;
+      const needKarma = !data.gangFaction && data.karma > GANG_KARMA;
+      const rep = await manageSleeves(ns, data, targets, act.work?.faction ?? null, needKarma);
+      for (const c of rep.changed) event("sleeve", c);
+      if (rep.augsBought) event("sleeve", `bought ${rep.augsBought} sleeve augmentation(s)`);
+      sleeveSummary = summarizeSleeves(rep.assignments);
+    } catch (e) {
+      event("error", `sleeves failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   const done = await runTask<string[]>(ns, "tasks/factions-act.js", [JSON.stringify(act)]);
   if (done.ok) for (const d of done.value ?? []) event("faction", d);
   else if (done.reason !== "ram") event("error", `faction actions failed: ${done.error}`);
@@ -243,14 +315,15 @@ function trackRuns(ns: NS, s: Snapshot, tracker: MetricsTracker, event: (k: stri
   const r = m.long.window >= 120_000 ? m.long : m.short;
   // migrate older state files (the field used to be called `run`) and repair partial ones
   if (st && !st.cur) {
-    st.cur = st.run ?? {
+    // bracket access: a bare `.run` would cost 1 GB (it matches ns.run in the RAM calculator)
+    st.cur = st["run"] ?? {
       start: st.lastAugReset ?? s.lastAugReset,
       peakIncome: 0,
       peakRepRate: 0,
       hackLevel: s.hackLevel,
       augsInstalled: s.augsInstalled,
     };
-    delete st.run;
+    delete st["run"];
   }
   if (!st || typeof st.lastAugReset !== "number") {
     writeJson(ns, STATE_FILE, {
@@ -315,11 +388,14 @@ function draw(
 
   L.push("");
   if (s.gang) {
-    L.push(`gang ${s.gang.faction}: ${s.gang.members} members  respect ${num(s.gang.respect)}  territory ${(s.gang.territory * 100).toFixed(1)}%  ${money(s.gang.moneyRate * 5)}/s`);
+    const g = readJson<{ mode?: string; tasks?: Record<string, number>; warfare?: boolean; wantedPenalty?: number }>(ns, DATA.gang, {});
+    L.push(`gang ${s.gang.faction}: ${s.gang.members} members  respect ${num(s.gang.respect)}  territory ${(s.gang.territory * 100).toFixed(1)}%${g.warfare ? " (warfare)" : ""}  ${money(s.gang.moneyRate * 5)}/s`);
+    if (g.tasks)
+      L.push(`  ${g.mode ?? "?"} mode · ${Object.entries(g.tasks).map(([t, n]) => `${t} ${n}`).join(" · ")} · wanted penalty ${(100 - (g.wantedPenalty ?? 1) * 100).toFixed(1)}%`);
   } else {
     L.push(`karma ${num(s.karma)} / ${num(GANG_KARMA)}  (${num(r.karma)}/s)  →  time to gang ${dur(m.timeToGang)}`);
   }
-  L.push(`sleeves ${s.sleeves}   kills ${s.kills}`);
+  L.push(`sleeves ${s.sleeves}${sleeveSummary ? `: ${sleeveSummary}` : ""}   kills ${s.kills}`);
 
   if (plan) {
     L.push("");

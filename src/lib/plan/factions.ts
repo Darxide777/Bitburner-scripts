@@ -111,8 +111,12 @@ export interface Plan {
   /** Augs that could be bought right now if we installed (purchase order). */
   ready: Candidate[];
   readyCost: number;
-  /** Top candidates still blocked on rep or money. */
+  /** Top candidates still blocked on rep or money (display list, truncated). */
   pending: (Candidate & { eta: number })[];
+  /** Every joined, workable faction that still gates a wanted aug, most valuable first (for sleeves). */
+  grindFactions: string[];
+  /** Number of wanted augs still gated on rep, per (best-source) faction. Not truncated. */
+  repGated: Record<string, number>;
   nextEta: number;
   notes: string[];
 }
@@ -267,11 +271,13 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
       work = { faction: target.faction, type: F[target.faction].bestWork!, focus: cfg.focus && !data.hasNeuroreceptor };
       notes.push(`grinding ${target.faction} for ${target.aug} (${fmtS(target.repEta)})`);
     } else {
-      // nothing rep-gated: build rep for NeuroFlux in the best faction, else crime (karma for the gang)
+      // nothing the player can grind: build rep for NeuroFlux in the best faction, else crime (karma for the gang)
+      const gangGated = pending.filter((c) => c.repGap > 0 && c.faction === data.gangFaction).length;
+      const why = gangGated ? `${gangGated} augs wait on ${data.gangFaction} (gang respect)` : "no rep-gated augs left";
       const nfgFaction = bestNfgFaction(data, true);
       if (nfgFaction) {
         work = { faction: nfgFaction, type: F[nfgFaction].bestWork!, focus: cfg.focus && !data.hasNeuroreceptor };
-        notes.push(`no rep-gated augs left; building ${nfgFaction} rep for NeuroFlux`);
+        notes.push(`${why}; building ${nfgFaction} rep for NeuroFlux`);
       } else {
         crime = "Homicide";
         notes.push("nothing to grind; doing crime");
@@ -373,6 +379,16 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     ready,
     readyCost: readyCost + donations,
     pending: pending.slice(0, 8),
+    repGated: pending
+      .filter((c) => c.repGap > 0 && c.donation === 0)
+      .reduce<Record<string, number>>((acc, c) => ((acc[c.faction] = (acc[c.faction] ?? 0) + 1), acc), {}),
+    grindFactions: [
+      ...new Set(
+        pending
+          .filter((c) => c.repGap > 0 && c.donation === 0 && F[c.faction]?.joined && F[c.faction].workTypes.length > 0)
+          .map((c) => c.faction),
+      ),
+    ],
     nextEta,
     notes,
   };

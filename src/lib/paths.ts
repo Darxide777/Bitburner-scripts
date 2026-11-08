@@ -8,11 +8,14 @@ export const DATA = {
   events: "data/events.txt", // JSONL decision/event log
   runs: "data/runs.txt", // JSONL one line per augment install / node reset
   hack: "data/hack.txt", // hacking manager status
+  gang: "data/gang.txt", // gang manager status
+  gangConfig: "data/gang-config.txt", // gang tunables, written by the daemon
 } as const;
 
 export const SCRIPTS = {
   daemon: "daemon.js",
   hackManager: "hack/manager.js",
+  gangManager: "gang/manager.js",
   hack: "hack/w/h.js",
   grow: "hack/w/g.js",
   weaken: "hack/w/w.js",
