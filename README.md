@@ -49,6 +49,7 @@ daemon.js                 orchestrator: telemetry → metrics → planner module
 │   └─ hack/w/{h,g,w,s}.js  minimal workers (hack/grow/weaken/share)
 ├─ gang/manager.js        long-running gang manager, ticks on every gang update
 ├─ stanek/charge.js       one big charging process for Stanek's Gift (spawned after installs)
+├─ go/play.js             IPvGO manager: our own MCTS player + matchup picker
 └─ casino.js              blackjack save-scummer for the casino's $10b-per-install allowance
 lib/                      task runner, call proxy, metrics, network, file IO, formatting
 lib/plan/                 faction/aug data collection, requirement evaluator, planner
@@ -124,6 +125,24 @@ product of the powers of every booster touching it. Consequences:
 - **Acceptance**: the gift can only be accepted before any non-NeuroFlux aug, so the daemon
   accepts it at BitNode start, before anything can buy augs.
 
+**IPvGO** (`lib/go/engine.ts`, `lib/go/mcts.ts`, `lib/plan/go.ts`, `go/play.ts`). Every finished
+game, win or lose (a loss counts half), adds node power for that opponent, and node power
+becomes a bonus: Daedalus → rep, Illuminati → hack speed, The Black Hand → hacking money,
+`????????????` → hacking level, … Bonuses reset on every install; favor from win streaks at
+joined factions does not.
+
+- *Engine*: the game's rules, written from scratch: captures, no suicide, positional superko
+  against the game's own move history, area scoring without dead-stone removal, komi.
+- *Player*: UCT Monte Carlo tree search with tactical playouts (take captures, don't fill own
+  eyes, avoid self-atari). The reward is win/loss plus a little area, because node power scales
+  with points. Thinking is sliced (`ns.sleep(0)`) so the UI stays responsive. Offline
+  (`node tools/go-bench.mjs 7 6 300 5.5`) it beats a tactical bot every game at ~8.5k
+  playouts/move on 7×7.
+- *Matchup picker*: tracks each (opponent, size) arm as an EMA of bonus-points gained per game
+  and minutes per game. It plays the arm with the best weighted bonus per minute, with UCB
+  exploration. That adapts to diminishing returns and to which opponents it actually beats.
+  Weights favor Daedalus (rep).
+
 **Casino** (`casino.ts`). The casino has no API, so this drives the blackjack UI through the DOM
 (25 GB while it runs). Loop: save → play a hand with basic strategy → on a loss, reload the
 page, which restores the save and restarts the script. Bets are min($100m, money). It stops
@@ -164,6 +183,7 @@ faction-working.
 - [ ] Learn install timing from `runs.txt` history instead of fixed `installPatience`
 - [x] Casino: blackjack save-scumming for $10b per install
 - [x] Stanek's Gift: acceptance, layout solver, per-install charging
+- [x] IPvGO: rules engine, MCTS player, self-optimizing matchup choice
 - [ ] Company work → megacorp factions (ECorp, MegaCorp, KuaiGong, NWO, …)
 - [ ] Hacking-XP mode when the hack level gates the next faction or w0r1dd43m0n
 - [ ] Move the remaining recurring tasks onto the call proxy to shrink the home reserve
@@ -173,5 +193,6 @@ faction-working.
 - [ ] Gang: account for v3's install penalty on ascension multipliers (`getInstallResult`)
 - [ ] Hacknet servers + hash spending
 - [ ] Bladeburner (alternate win condition + rep)
-- [ ] Corporation, IPvGO, coding contracts, stock market
+- [ ] Corporation, coding contracts, stock market
+- [ ] IPvGO cheats (SF14 `ns.go.cheat`) where the success chance is worth the risk
 - [ ] Endgame: Daedalus → The Red Pill → w0r1dd43m0n, then auto-continue into the next BN12 level

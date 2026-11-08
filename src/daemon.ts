@@ -20,6 +20,7 @@ import { collectFactionData } from "./lib/plan/collect.js";
 import { NFG, type FactionData } from "./lib/plan/data.js";
 import { augValue, DEFAULT_PLAN, plan as makePlan, type Plan, type PlanConfig } from "./lib/plan/factions.js";
 import type { GangConfig } from "./lib/plan/gang.js";
+import type { GoConfig } from "./lib/plan/go.js";
 import { manageSleeves } from "./lib/sleeves.js";
 import { DEFAULT_STANEK, manageStanek, type StanekConfig, type StanekStatus } from "./lib/stanek.js";
 import { runTask, spawnTask } from "./lib/task.js";
@@ -41,6 +42,8 @@ interface DaemonConfig {
   casino: boolean;
   /** Overrides for Stanek's Gift management (see lib/stanek.ts DEFAULT_STANEK). */
   stanek: Partial<StanekConfig>;
+  /** Overrides for the IPvGO manager (see lib/plan/go.ts DEFAULT_GO). */
+  go: Partial<GoConfig>;
   /** Overrides for the gang manager (see lib/plan/gang.ts DEFAULT_GANG); mode is set automatically unless given. */
   gang: Partial<GangConfig>;
 }
@@ -54,6 +57,7 @@ const DEFAULTS: DaemonConfig = {
   manageGang: true,
   casino: true,
   stanek: {},
+  go: {},
   gang: {},
 };
 
@@ -111,9 +115,16 @@ export async function main(ns: NS): Promise<void> {
     // ---- casino ($10b per install, early in a run) ----
     if (s && cfg.casino) casinoModule(ns, s, m, event);
 
+    // ---- IPvGO manager ----
+    if (cfg.go.enabled !== false) {
+      writeJson(ns, DATA.goConfig, cfg.go);
+      if (!ns.isRunning(SCRIPTS.goManager, "home") && ns.exec(SCRIPTS.goManager, "home")) event("go", "started IPvGO manager");
+    }
+
     // ---- hacking manager ----
     const wanted: string[] = [];
     if (s?.gang && cfg.manageGang) wanted.push(SCRIPTS.gangManager);
+    if (cfg.go.enabled !== false) wanted.push(SCRIPTS.goManager);
     // keep room for the casino table while this install's $10b allowance is unclaimed
     if (s && cfg.casino && (s.earned.casino ?? 0) < CASINO_CAP) wanted.push(SCRIPTS.casinoTable);
     // plus room for the Stanek charger while it waits for a big enough block of home RAM

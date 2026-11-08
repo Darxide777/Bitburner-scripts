@@ -11,6 +11,8 @@ export const DATA = {
   gang: "data/gang.txt", // gang manager status
   gangConfig: "data/gang-config.txt", // gang tunables, written by the daemon
   casino: "data/casino.txt", // casino.js outcome for the current install
+  go: "data/go.txt", // IPvGO manager status
+  goConfig: "data/go-config.txt", // IPvGO tunables
 } as const;
 
 export const SCRIPTS = {
@@ -18,6 +20,7 @@ export const SCRIPTS = {
   hackManager: "hack/manager.js",
   gangManager: "gang/manager.js",
   casino: "casino.js", // launcher (small)
+  goManager: "go/play.js",
   casinoTable: "casino/table.js", // the DOM-driving script (~36 GB)
   hack: "hack/w/h.js",
   grow: "hack/w/g.js",
