@@ -43,6 +43,8 @@ export interface InfiltrationState {
   failures: number;
   /** failed runs in a row (the daemon's cooldown doubles with each) */
   consecutiveFailures?: number;
+  /** runs where no level was ever attempted (a driver problem, not the location's fault) */
+  driverErrors?: number;
   lastRun: { target: string; faction: string; rep: number; cash: number; seconds: number; ok: boolean } | null;
   note: string;
 }
@@ -51,11 +53,16 @@ export interface InfiltrationState {
 const HARMONIZER = "SoA - phyzical WKS harmonizer";
 
 interface InfilObj {
-  stage: Model & { onKey: (e: unknown) => void };
+  /** Intro/Victory stages have no onKey */
+  stage: Model & { onKey?: (e: unknown) => void };
   level: number;
   maxLevel: number;
   results: string;
+  startInfiltration?: () => void;
+  cancel?: () => void;
 }
+
+const TRACE = "data/infiltration-trace.txt";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -63,6 +70,7 @@ export async function main(ns: NS): Promise<void> {
   const faction = String(ns.args[0] ?? "");
   const st = readJson<InfiltrationState>(ns, DATA.infiltration, { t: 0, measured: {}, runs: 0, failures: 0, lastRun: null, note: "" });
   const event = (msg: string) => appendJsonl(ns, DATA.events, { t: Date.now(), kind: "infiltration", msg });
+  const trace = (msg: string) => ns.write(TRACE, `${new Date().toISOString()} ${msg}\n`, "a");
   const save = (note: string) => {
     writeJson(ns, DATA.infiltration, { ...st, t: Date.now(), note });
     if (note) event(note);
@@ -116,7 +124,10 @@ export async function main(ns: NS): Promise<void> {
     const repBefore = (await call<number>(ns, "singularity.getFactionRep", faction)) ?? 0;
     const cashBefore = ns.getServerMoneyAvailable("home");
     const started = Date.now();
-    press(startBtn);
+    // start through the object itself when we can see it (the button press is the fallback)
+    const atIntro = findInfiltration(doc);
+    if (atIntro && typeof atIntro.startInfiltration === "function") atIntro.startInfiltration();
+    else press(startBtn);
 
     // ---- play ----
     let ok = false;
@@ -139,6 +150,15 @@ export async function main(ns: NS): Promise<void> {
       missingSince = 0;
       lastResults = state.results;
       const model = state.stage;
+      if (typeof model.onKey !== "function") {
+        // Intro (start didn't take) or Victory (not rendered yet): nudge Intro, else wait
+        if (button(doc, (s) => s === "Start") && typeof state.startInfiltration === "function" && Date.now() - started > 1000) {
+          trace("still at the intro after 1 s: calling startInfiltration() again");
+          state.startInfiltration();
+        }
+        await ns.sleep(50);
+        continue;
+      }
       const step = nextStep(model);
       if ("wait" in step) {
         await ns.sleep(10);
@@ -149,6 +169,14 @@ export async function main(ns: NS): Promise<void> {
         model.onKey({ key, preventDefault() {} });
         await ns.sleep(15);
       }
+    }
+
+    if (!ok) {
+      const s = findInfiltration(doc);
+      trace(
+        `run ended without success: infiltration ${s ? `found (stage fields: ${Object.keys(s.stage).join(",")}; results "${s.results}")` : "not found"}; buttons: ${[...doc.querySelectorAll("button")].map((b) => (b.textContent ?? "").trim()).filter(Boolean).slice(0, 15).join(" | ")}`,
+      );
+      s?.cancel?.(); // don't leave a stuck infiltration behind
     }
 
     // ---- reward ----
@@ -163,10 +191,13 @@ export async function main(ns: NS): Promise<void> {
     const rep = ((await call<number>(ns, "singularity.getFactionRep", faction)) ?? 0) - repBefore;
     const cash = ns.getServerMoneyAvailable("home") - cashBefore;
     st.runs++;
+    // no level ever attempted = our driver failed, not the location: back off, but don't blame it
+    const driverError = !ok && !lastResults;
     if (!ok) {
       st.failures++;
       st.consecutiveFailures = (st.consecutiveFailures ?? 0) + 1;
-      st.measured[t.name] = recordFailure(st.measured[t.name]);
+      if (driverError) st.driverErrors = (st.driverErrors ?? 0) + 1;
+      else st.measured[t.name] = recordFailure(st.measured[t.name]);
     } else st.consecutiveFailures = 0;
     if (ok && traded && rep > 0) st.measured[t.name] = recordRun(st.measured[t.name], rep, seconds);
     st.lastRun = { target: t.name, faction, rep, cash, seconds, ok };
@@ -187,7 +218,7 @@ function findInfiltration(doc: Document): InfilObj | null {
     let f = key ? (el as unknown as Record<string, FiberNode>)[key] : undefined;
     for (let depth = 0; f && depth < 40; depth++, f = f.return) {
       const s = f.memoizedProps?.state as InfilObj | undefined;
-      if (s && typeof s === "object" && s.stage && typeof s.stage.onKey === "function" && "maxLevel" in s) return s;
+      if (s && typeof s === "object" && s.stage && typeof s.stage === "object" && "maxLevel" in s) return s;
     }
   }
   return null;
