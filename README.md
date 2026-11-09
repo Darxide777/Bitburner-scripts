@@ -92,13 +92,14 @@ collects faction/aug state and the planner decides:
   work type with the highest rep/s from Formulas. With nothing left to grind, it builds rep for
   NeuroFlux, then falls back to crime (karma toward a gang).
 - *travel / backdoor*: when a wanted faction is missing only a city or a backdoor, go get it.
-- *skill gates* (hacking, charisma): a skill level that blocks something valuable — a faction
+- *skill gates* (hacking, charisma, combat): a skill level that blocks something valuable — a faction
   invite, the easiest company job in a useful field, or w0r1d_d43m0n's hack level. Hacking: the
   hacking manager puts `hackXpShare` (50%) of the pool on weaken for XP (weaken gives a hack's XP
   per thread and never touches money) on the server with the most XP per second, until the gate
   clears. Study (player time): XP still needed for the level — the game's skill formula inverted
   with the multiplier calibrated from current level and XP — ÷ the best course's XP/s
-  (`formulas.work.universityGains`: Algorithms for hacking, Leadership for charisma) gives the
+  (`formulas.work.universityGains`: Algorithms for hacking, Leadership for charisma; for combat
+  stats the best gym by `formulas.work.gymGains`, one stat at a time in a fixed order) gives the
   study time; the gate's value ÷ (study + the rep it then needs) competes with faction work and
   company routes like a company route does (20% margin, or when there's nothing better).
 - *company work* (megacorp factions): for factions whose invite needs company rep or a job,
@@ -374,7 +375,7 @@ it in the hacking reserve, and `tasks/restart.js` restarts it on every new build
 - [x] Stanek's Gift: acceptance, layout solver, per-install charging
 - [x] IPvGO: rules engine, MCTS player, self-optimizing matchup choice
 - [x] Company work → megacorp factions, when the route beats faction work (logged to judge it)
-- [x] Skill gates: hacking-XP farming and study (hacking/charisma) when a level blocks a faction,
+- [x] Skill gates: hacking-XP farming, study (hacking/charisma) and gym (combat) when a level blocks a faction,
       a company job, or w0r1d_d43m0n
 - [x] Shrink the home reserve: daemon 33 → ~8 GB (`window` DOM charge), faction actions via the
       proxy (34 GB task gone), contracts on spare RAM, corp proxy reserve only with a corp

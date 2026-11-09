@@ -415,7 +415,7 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
 
   // ---------- skill gates: hacking / charisma levels that block something valuable ----------
   const skillGates: SkillGate[] = [];
-  const studyable = ["hacking", "charisma"];
+  const studyable = ["hacking", "charisma", "strength", "defense", "dexterity", "agility"];
   const studySecFor = (needs: Record<string, number>) => {
     let sec = 0;
     for (const [sk, lvl] of Object.entries(needs)) {
@@ -473,10 +473,17 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
   let study: Plan["study"] = null;
   const takeStudy = (why: string) => {
     const g = skillGates.find((x) => Number.isFinite(x.studySec))!;
+    // one skill at a time, in the gate's (fixed) order: picking the lowest would hop
     const skill = Object.keys(g.needs).find((sk) => (data.skills[sk] ?? 0) < g.needs[sk])!;
     const opt = data.study![skill];
-    study = { university: opt.university, city: opt.city, course: opt.course, skill, focus: cfg.focus && !data.hasNeuroreceptor };
-    notes.push(`${why}: studying ${opt.course} for ${skill} ${g.needs[skill]} (${fmtS(g.studySec)}) → ${g.target}`);
+    const focus = cfg.focus && !data.hasNeuroreceptor;
+    if (opt.kind === "gym") {
+      train = { stat: opt.course, gym: opt.university, city: opt.city, focus };
+      notes.push(`${why}: training ${skill} to ${g.needs[skill]} at ${opt.university} (${fmtS(g.studySec)} in all) → ${g.target}`);
+    } else {
+      study = { university: opt.university, city: opt.city, course: opt.course, skill, focus };
+      notes.push(`${why}: studying ${opt.course} for ${skill} ${g.needs[skill]} (${fmtS(g.studySec)}) → ${g.target}`);
+    }
   };
   const bestStudy = skillGates.find((x) => Number.isFinite(x.studySec)) ?? null;
   let company: Plan["company"] = null;

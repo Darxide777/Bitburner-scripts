@@ -344,3 +344,18 @@ test("a company job blocked by a skill is a gate; company work alone is no route
   assert.equal(p.skillGates[0].target, "ECorp job (for ECorp)");
   assert.equal(p.study?.skill, "charisma");
 });
+
+test("combat gates train at the best gym, one stat at a time in a fixed order", () => {
+  const w = gateWorld({ skills: { hacking: 100, charisma: 100, strength: 50, defense: 20, dexterity: 20, agility: 20 }, exp: { strength: 500, defense: 100, dexterity: 100, agility: 100 } });
+  delete w.factions.Charm;
+  for (const s of ["strength", "defense", "dexterity", "agility"])
+    w.study[s] = { kind: "gym", university: "Powerhouse Gym", city: "Sector-12", course: s.slice(0, 3), expPerSec: 100 };
+  w.factions.Tetrads = fac({ augs: ["T Aug"], requirements: [{ type: "skills", skills: { strength: 75, defense: 75, dexterity: 75, agility: 75 } }] });
+  w.augs["T Aug"] = aug({ repReq: 100, price: 1e6, factions: ["Tetrads"], stats: { hacking: 3 } });
+  const p = plan(input(w));
+  assert.ok(Number.isFinite(p.skillGates[0].studySec));
+  assert.deepEqual(p.train, { stat: "str", gym: "Powerhouse Gym", city: "Sector-12", focus: true }, "strength first (lowest is defense, but order is fixed)");
+  assert.equal(p.study, null);
+  w.skills.strength = 80;
+  assert.equal(plan(input(w)).train?.stat, "def");
+});

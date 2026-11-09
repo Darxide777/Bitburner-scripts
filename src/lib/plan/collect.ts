@@ -193,7 +193,24 @@ const COURSES: [string, string, "hackExp" | "chaExp"][] = [
   ["charisma", "Leadership", "chaExp"],
 ];
 
-/** Best university course per skill, by formulas.work.universityGains (XP per second). */
+const GYMS: [string, string][] = [
+  ["Powerhouse Gym", "Sector-12"],
+  ["Millenium Fitness Gym", "Volhaven"],
+  ["Snap Fitness Gym", "Aevum"],
+  ["Crush Fitness Gym", "Aevum"],
+  ["Iron Gym", "Sector-12"],
+];
+const GYM_STATS: [string, string, string][] = [
+  ["strength", "str", "strExp"],
+  ["defense", "def", "defExp"],
+  ["dexterity", "dex", "dexExp"],
+  ["agility", "agi", "agiExp"],
+];
+
+/**
+ * Best place per skill to raise it: a university course for hacking / charisma
+ * (formulas.work.universityGains), a gym for combat stats (formulas.work.gymGains).
+ */
 async function collectStudy(ns: NS, p: Player): Promise<Record<string, StudyOption>> {
   const combos = COURSES.flatMap(([skill, course, field]) => UNIVERSITIES.map(([u, city]) => ({ skill, course, field, u, city })));
   const gains = await callEach<Record<string, number>>(
@@ -204,7 +221,14 @@ async function collectStudy(ns: NS, p: Player): Promise<Record<string, StudyOpti
   const out: Record<string, StudyOption> = {};
   combos.forEach((c, k) => {
     const perSec = (gains[k]?.[c.field] ?? 0) * 5; // per 200 ms cycle → per second
-    if (perSec > (out[c.skill]?.expPerSec ?? 0)) out[c.skill] = { university: c.u, city: c.city, course: c.course, expPerSec: perSec };
+    if (perSec > (out[c.skill]?.expPerSec ?? 0))
+      out[c.skill] = { kind: "university", university: c.u, city: c.city, course: c.course, expPerSec: perSec };
+  });
+  const gyms = GYM_STATS.flatMap(([skill, code, field]) => GYMS.map(([g, city]) => ({ skill, code, field, g, city })));
+  const gg = await callEach<Record<string, number>>(ns, "formulas.work.gymGains", gyms.map((x) => [p, x.code, x.g]));
+  gyms.forEach((x, k) => {
+    const perSec = (gg[k]?.[x.field] ?? 0) * 5;
+    if (perSec > (out[x.skill]?.expPerSec ?? 0)) out[x.skill] = { kind: "gym", university: x.g, city: x.city, course: x.code, expPerSec: perSec };
   });
   return out;
 }

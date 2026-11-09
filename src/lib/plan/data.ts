@@ -39,10 +39,13 @@ export interface CompanyInfo {
   skillGate?: Record<string, number>;
 }
 
-/** The best university course for a skill: where, which, and the XP per second it gives. */
+/** The best place to train a skill: a university course, or a gym (combat stats). */
 export interface StudyOption {
+  kind?: "university" | "gym";
+  /** university or gym name */
   university: string;
   city: string;
+  /** course name, or the gym stat code ("str", "def", "dex", "agi") */
   course: string;
   expPerSec: number;
 }
