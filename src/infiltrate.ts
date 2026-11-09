@@ -56,8 +56,11 @@ export async function main(ns: NS): Promise<void> {
   const doc = document;
   const faction = String(ns.args[0] ?? "");
   const st = readJson<InfiltrationState>(ns, DATA.infiltration, { t: 0, measured: {}, runs: 0, failures: 0, lastRun: null, note: "" });
-  const save = (note: string) => writeJson(ns, DATA.infiltration, { ...st, t: Date.now(), note });
   const event = (msg: string) => appendJsonl(ns, DATA.events, { t: Date.now(), kind: "infiltration", msg });
+  const save = (note: string) => {
+    writeJson(ns, DATA.infiltration, { ...st, t: Date.now(), note });
+    if (note) event(note);
+  };
 
   while (true) {
     const ctl = readJson<InfiltrationControl>(ns, DATA.infiltrationConfig, { active: false, faction: null });
@@ -104,6 +107,8 @@ export async function main(ns: NS): Promise<void> {
 
     // ---- play ----
     let ok = false;
+    let missingSince = 0;
+    let lastResults = "";
     for (let guard = 0; guard < 20_000; guard++) {
       if (findText(doc, "Infiltration successful!")) {
         ok = true;
@@ -111,9 +116,15 @@ export async function main(ns: NS): Promise<void> {
       }
       const state = findInfiltration(doc);
       if (!state) {
-        // gone: cancelled, hospitalized, or the page changed
-        break;
+        // React may not have re-rendered yet (e.g. right after Start): only a sustained
+        // absence means it's gone (cancelled, hospitalized, or the page changed)
+        missingSince ||= Date.now();
+        if (Date.now() - missingSince > 2000) break;
+        await ns.sleep(25);
+        continue;
       }
+      missingSince = 0;
+      lastResults = state.results;
       const model = state.stage;
       const step = nextStep(model);
       if ("wait" in step) {
@@ -145,7 +156,7 @@ export async function main(ns: NS): Promise<void> {
     event(
       ok
         ? `${t.name}: ${traded ? `+${ns.format.number(rep)} ${faction} rep` : `sold for $${ns.format.number(cash)}`} in ${seconds.toFixed(0)}s`
-        : `${t.name}: run failed after ${seconds.toFixed(0)}s`,
+        : `${t.name}: run failed after ${seconds.toFixed(1)}s (results ${lastResults || "none"})`,
     );
     save(ok ? "" : "last run failed");
     if (!ok) return; // don't keep losing HP: the daemon decides whether to try again
