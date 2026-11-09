@@ -6,7 +6,7 @@ import type { Multipliers, NS, Player, PlayerRequirement, ResetInfo, Server } fr
 import { callEach, call } from "../call.js";
 import { allHosts } from "../net.js";
 import { WORLD_DAEMON } from "../paths.js";
-import { NEURORECEPTOR, type AugInfo, type FactionData, type FactionInfo } from "./data.js";
+import { NEURORECEPTOR, type AugInfo, type CompanyInfo, type FactionData, type FactionInfo } from "./data.js";
 
 const PROGRAM_FILES = ["BruteSSH.exe", "FTPCrack.exe", "relaySMTP.exe", "HTTPWorm.exe", "SQLInject.exe", "Formulas.exe"];
 
@@ -176,5 +176,61 @@ export async function collectFactionData(ns: NS): Promise<FactionData> {
     augs,
     worldDaemon,
     jobs: { ...p.jobs } as Record<string, string>,
+    companies: await collectCompanies(ns, p, notJoined.flatMap((f) => reqs.get(f) ?? []), formulas),
   };
+}
+
+/** Job fields worth working in (company rep from hacking/charisma work). */
+const JOB_FIELDS = ["Software", "IT", "Security Engineer", "Network Engineer", "Software Consultant", "Business", "Security"];
+
+/**
+ * Companies that unjoined factions' invites depend on: rep, favor, job, and the best position
+ * we qualify for with its rep/s (formulas.work.companyGains; 0 without Formulas.exe).
+ */
+async function collectCompanies(ns: NS, p: Player, reqs: PlayerRequirement[], formulas: boolean): Promise<Record<string, CompanyInfo>> {
+  const names = new Set<string>();
+  const walk = (r: PlayerRequirement) => {
+    if (r.type === "employedBy" || r.type === "companyReputation") names.add(r.company);
+    else if (r.type === "someCondition" || r.type === "everyCondition") r.conditions.forEach(walk);
+    else if (r.type === "not") walk(r.condition);
+  };
+  reqs.forEach(walk);
+  const list = [...names];
+  if (!list.length) return {};
+  const S = "singularity.";
+  const rep = await each<number>(ns, S + "getCompanyRep", list);
+  const favor = await each<number>(ns, S + "getCompanyFavor", list);
+  const positions = await each<string[]>(ns, S + "getCompanyPositions", list);
+  const pairs = list.flatMap((c) => (positions.get(c) ?? []).map((pos) => [c, pos] as [string, string]));
+  const infos = await callEach<{ field: string; requiredReputation: number; requiredSkills: Record<string, number> }>(
+    ns,
+    S + "getCompanyPositionInfo",
+    pairs,
+  );
+  const jobs = p.jobs as Record<string, string>;
+  // the current job, plus every position in a useful field we qualify for right now
+  const cands = pairs.filter(([c, pos], k) => {
+    if (jobs[c] === pos) return true;
+    const i = infos[k];
+    if (!i || !JOB_FIELDS.includes(i.field) || i.requiredReputation > (rep.get(c) ?? 0)) return false;
+    return Object.entries(i.requiredSkills).every(([s, v]) => ((p.skills as unknown as Record<string, number>)[s] ?? 0) >= v);
+  });
+  const gains = formulas
+    ? await callEach<{ reputation: number }>(
+        ns,
+        "formulas.work.companyGains",
+        cands.map(([c, pos]) => [p, c, pos, favor.get(c) ?? 0]),
+      )
+    : [];
+  const out: Record<string, CompanyInfo> = {};
+  for (const c of list)
+    out[c] = { rep: rep.get(c) ?? 0, favor: favor.get(c) ?? 0, job: jobs[c] ?? null, position: null, field: null, repPerSec: 0 };
+  cands.forEach(([c, pos], k) => {
+    const perSec = (gains[k]?.reputation ?? 0) * 5; // per 200 ms cycle → per second
+    if (perSec > out[c].repPerSec) {
+      const info = infos[pairs.findIndex(([cc, pp]) => cc === c && pp === pos)];
+      Object.assign(out[c], { position: pos, field: info?.field ?? null, repPerSec: perSec });
+    }
+  });
+  return out;
 }

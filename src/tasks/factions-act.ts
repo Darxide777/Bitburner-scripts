@@ -1,6 +1,6 @@
 // Carries out the cheap, immediate parts of a faction plan.
 // args: JSON {join, travelTo, work, crime, buyNow}
-import type { CityName, CrimeType, FactionName, FactionWorkType, GymLocationName, GymType, NS } from "@ns";
+import type { CityName, CompanyName, CrimeType, FactionName, FactionWorkType, GymLocationName, GymType, JobField, NS } from "@ns";
 import { task } from "../lib/task.js";
 
 export interface ActArgs {
@@ -11,6 +11,8 @@ export interface ActArgs {
   buyNow: [string, string][];
   /** gym workout (takes precedence over work/crime) */
   train?: { stat: string; gym: string; city: string; focus: boolean } | null;
+  /** company work for a faction invite (after training, before faction work) */
+  company?: { company: string; field: string; focus: boolean } | null;
 }
 
 export async function main(ns: NS): Promise<void> {
@@ -34,6 +36,13 @@ export async function main(ns: NS): Promise<void> {
         if (ns.getPlayer().city !== t.city && sing.travelToCity(t.city as CityName)) done.push(`travelled to ${t.city}`);
         if (sing.gymWorkout(t.gym as GymLocationName, t.stat as GymType, t.focus)) done.push(`training ${t.stat} at ${t.gym}`);
       }
+    } else if (a.company) {
+      const c = a.company;
+      // applying again while employed is how promotions happen (null = nothing better)
+      const job = sing.applyToCompany(c.company as CompanyName, c.field as JobField);
+      if (job) done.push(`job at ${c.company}: ${job}`);
+      const same = cur?.type === "COMPANY" && cur.companyName === c.company;
+      if ((!same || job) && sing.workForCompany(c.company as CompanyName, c.focus)) done.push(`working at ${c.company}`);
     } else if (a.work) {
       const same =
         cur?.type === "FACTION" && cur.factionName === a.work.faction && cur.factionWorkType === a.work.type;

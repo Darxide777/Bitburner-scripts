@@ -13,13 +13,17 @@ export interface ReqContext {
   sourceFiles: Record<string, number>;
   files: string[];
   backdoors: Record<string, boolean>;
-  /** company -> rep; company work isn't automated yet, so these usually fail. */
+  /** company -> rep (the planner can earn it with company work: a "company" fix) */
   companyRep: Record<string, number>;
   jobs: Record<string, string>;
 }
 
 /** A requirement we could satisfy by acting (travel, backdoor), vs. one we can only wait for. */
-export type Fix = { kind: "travel"; city: string } | { kind: "backdoor"; server: string };
+export type Fix =
+  | { kind: "travel"; city: string }
+  | { kind: "backdoor"; server: string }
+  /** work for `company` until its rep reaches `rep` (0 = just be employed there) */
+  | { kind: "company"; company: string; rep: number };
 
 export interface ReqResult {
   met: boolean;
@@ -83,9 +87,13 @@ function check(r: PlayerRequirement, c: ReqContext): Check {
     case "sourceFile":
       return { ok: (c.sourceFiles[String(r.sourceFile)] ?? 0) > 0, why: `SF${r.sourceFile}` };
     case "employedBy":
-      return { ok: r.company in c.jobs, why: `employed by ${r.company}` };
+      return { ok: r.company in c.jobs, why: `employed by ${r.company}`, fix: { kind: "company", company: r.company, rep: 0 } };
     case "companyReputation":
-      return { ok: (c.companyRep[r.company] ?? 0) >= r.reputation, why: `${r.company} rep ≥ ${r.reputation}` };
+      return {
+        ok: (c.companyRep[r.company] ?? 0) >= r.reputation,
+        why: `${r.company} rep ≥ ${r.reputation}`,
+        fix: { kind: "company", company: r.company, rep: r.reputation },
+      };
     case "jobTitle":
       return { ok: Object.values(c.jobs).includes(r.jobTitle), why: `job ${r.jobTitle}` };
     case "not": {

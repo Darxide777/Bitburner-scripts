@@ -38,6 +38,10 @@ export interface PlanConfig {
   bladeburnerFirst: boolean;
   /** Extra value per aug on top of its stats (effects the stats don't show). */
   augBonus: Record<string, number>;
+  /** Work for companies whose rep gates a faction, when that route beats faction work. */
+  companyWork: boolean;
+  /** a company route must beat the best faction grind by this factor */
+  companyMargin: number;
   weights: Record<string, number>;
 }
 
@@ -52,6 +56,8 @@ export const DEFAULT_PLAN: PlanConfig = {
   manageWork: true,
   focus: true,
   bladeburnerFirst: true,
+  companyWork: true,
+  companyMargin: 1.2,
   // Church of the Machine God augs, wanted for the Stanek path: valued above their listed stats
   augBonus: { "Stanek's Gift - Awakening": 3, "Stanek's Gift - Serenity": 3 },
   // value of +100% in each multiplier (cost multipliers count as reductions)
@@ -120,6 +126,12 @@ export interface Plan {
   destroy: boolean;
   /** Bladeburner actions may use the player's time (always with The Blade's Simulacrum). */
   bladeburner: boolean;
+  /** Company work to earn an invite (megacorp factions): the job to work and why. */
+  company: { company: string; field: string; faction: string; focus: boolean } | null;
+  /** Best company routes, value per second (logged to judge them against faction work). */
+  companyRoutes: CompanyRoute[];
+  /** value per second of the best faction grind, for comparison */
+  grindScore: number;
   /** Gym training (combat stat) to reach the Bladeburner division's 100-in-each requirement. */
   train: { stat: string; gym: string; city: string; focus: boolean } | null;
   /** Why destroy is (not) happening: Red Pill installed, w0r1d_d43m0n seen/rooted, hack level vs req. */
@@ -161,6 +173,21 @@ export interface PlanInput {
   ratesReady?: boolean;
   /** Bladeburner manager state: in the division, and whether actions can run alongside work. */
   bladeburner?: { inDivision: boolean; simulacrum: boolean; canJoin?: boolean };
+}
+
+export interface CompanyRoute {
+  faction: string;
+  company: string;
+  position: string | null;
+  field: string | null;
+  /** the faction aug this route is for, and its value */
+  aug: string;
+  value: number;
+  /** seconds: company rep still needed at the measured rate, then the aug's faction rep */
+  companySec: number;
+  factionSec: number;
+  /** value per second of the whole route */
+  score: number;
 }
 
 export function augValue(stats: Record<string, number>, weights: Record<string, number>): number {
@@ -303,6 +330,63 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     .sort((a, b) => b.value / Math.max(1000, b.eta) - a.value / Math.max(1000, a.eta));
   const nextEta = Math.min(Infinity, ...pending.map((p) => p.eta));
 
+  // requirement context (company rep included: company work can earn it)
+  const reqCtx: ReqContext = {
+    money: data.money,
+    skills: data.skills,
+    karma: data.karma,
+    kills: data.kills,
+    city: data.city,
+    augsInstalled: data.installed.length,
+    node: data.node,
+    sourceFiles: data.sourceFiles,
+    files: data.files,
+    backdoors: data.backdoors,
+    companyRep: Object.fromEntries(Object.entries(data.companies ?? {}).map(([c, i]) => [c, i.rep])),
+    jobs: data.jobs,
+  };
+
+  // ---------- company routes: work a job until a faction invites, then earn its aug ----------
+  const joinedRates = Object.values(F).filter((x) => x.joined && x.workRepPerSec > 0).map((x) => x.workRepPerSec);
+  const estFactionRate = joinedRates.length ? joinedRates.reduce((a, b) => a + b, 0) / joinedRates.length : 0;
+  const companyRoutes: CompanyRoute[] = [];
+  if (cfg.companyWork && estFactionRate > 0)
+    for (const f of Object.keys(F)) {
+      if (F[f].joined || F[f].invited || !usable(f) || unownedValue(f) <= 0) continue;
+      if (F[f].enemies.some((e) => member.has(e))) continue;
+      const r = evaluate(F[f].requirements, reqCtx);
+      if (r.met || !r.fixes) continue;
+      const cfix = r.fixes.filter((x): x is Extract<typeof x, { kind: "company" }> => x.kind === "company");
+      if (!cfix.length) continue;
+      let companySec = 0;
+      let binding = cfix[0];
+      for (const x of cfix) {
+        const info = data.companies?.[x.company];
+        const sec = !info || info.repPerSec <= 0 ? Infinity : Math.max(0, x.rep - info.rep) / info.repPerSec;
+        if (sec >= companySec) [companySec, binding] = [sec, x];
+      }
+      if (!Number.isFinite(companySec)) continue;
+      const info = data.companies![binding.company];
+      for (const a of F[f].augs) {
+        if (a === NFG || owned.has(a) || !data.augs[a]) continue;
+        const factionSec = data.augs[a].repReq / estFactionRate;
+        const v = value(a);
+        const score = v / Math.max(1, companySec + factionSec);
+        const best = companyRoutes.find((x) => x.faction === f);
+        if (best && best.score >= score) continue;
+        if (best) companyRoutes.splice(companyRoutes.indexOf(best), 1);
+        companyRoutes.push({ faction: f, company: binding.company, position: info.position, field: info.field, aug: a, value: v, companySec, factionSec, score });
+      }
+    }
+  companyRoutes.sort((a, b) => b.score - a.score);
+  let company: Plan["company"] = null;
+  let grindScore = 0;
+  const takeCompany = (why: string) => {
+    const c = companyRoutes[0];
+    company = { company: c.company, field: c.field ?? "Software", faction: c.faction, focus: cfg.focus && !data.hasNeuroreceptor };
+    notes.push(`${why}: working at ${c.company} (${fmtS(c.companySec)}) for ${c.faction}'s ${c.aug}`);
+  };
+
   // ---------- work: best value-per-second rep grind ----------
   let work: Plan["work"] = null;
   let crime: string | null = null;
@@ -319,7 +403,10 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
   } else if (cfg.manageWork) {
     const grind = pending.filter((c) => c.repGap > 0 && c.donation === 0 && F[c.faction].bestWork && F[c.faction].joined);
     const target = grind.sort((a, b) => b.value / Math.max(1, b.repEta) - a.value / Math.max(1, a.repEta))[0];
-    if (target) {
+    grindScore = target ? target.value / Math.max(1, target.repEta) : 0;
+    if (target && companyRoutes[0] && companyRoutes[0].score > grindScore * cfg.companyMargin) {
+      takeCompany(`company route beats grinding ${target.faction}`);
+    } else if (target) {
       work = { faction: target.faction, type: F[target.faction].bestWork!, focus: cfg.focus && !data.hasNeuroreceptor };
       notes.push(`grinding ${target.faction} for ${target.aug} (${fmtS(target.repEta)})`);
     } else {
@@ -329,7 +416,9 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
       const nfgFaction = bestNfgFaction(data, true, input.currentWork);
       const bb = input.bladeburner;
       const bbAugsLeft = (F[BLADEBURNERS]?.augs ?? ["?"]).some((a) => a !== NFG && !owned.has(a));
-      if (bb?.inDivision && !bb.simulacrum && bbAugsLeft) {
+      if (companyRoutes[0]) {
+        takeCompany(why);
+      } else if (bb?.inDivision && !bb.simulacrum && bbAugsLeft) {
         bladeburner = true; // rank → Bladeburners rep, ahead of NeuroFlux and crime
         notes.push(`${why}; Bladeburner actions for Bladeburners rep`);
       } else if (nfgFaction) {
@@ -345,20 +434,7 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
   // ---------- travelTo & backdoors for invites we want ----------
   let travelTo: string | null = null;
   const backdoor: string[] = [];
-  const ctx: ReqContext = {
-    money: data.money,
-    skills: data.skills,
-    karma: data.karma,
-    kills: data.kills,
-    city: data.city,
-    augsInstalled: data.installed.length,
-    node: data.node,
-    sourceFiles: data.sourceFiles,
-    files: data.files,
-    backdoors: data.backdoors,
-    companyRep: {},
-    jobs: data.jobs,
-  };
+  const ctx = reqCtx;
   const wanted = Object.keys(F)
     .filter((f) => !F[f].joined && !F[f].invited && usable(f) && unownedValue(f) > 0)
     .filter((f) => !F[f].enemies.some((e) => member.has(e)))
@@ -433,6 +509,9 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     install,
     destroy,
     bladeburner,
+    company,
+    companyRoutes: companyRoutes.slice(0, 5),
+    grindScore,
     train,
     worldDaemon: { redPill: data.installed.includes(RED_PILL), ...data.worldDaemon, hackLevel: data.hackLevel },
     infraSpend,

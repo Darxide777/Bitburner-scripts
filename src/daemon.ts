@@ -380,6 +380,8 @@ let bladeburnerWanted = false;
  */
 let lastSleeveLog = 0;
 let lastGraftLog = 0;
+let lastCompanyLog = 0;
+let lastCompanyKey = "";
 /** latest grafting evaluation (dashboard) */
 let graftTop: GraftRow | null = null;
 
@@ -589,7 +591,7 @@ async function factionsModule(
     return p;
   }
 
-  const act: ActArgs = { join: p.join, travelTo: p.travelTo, work: p.work, crime: p.crime, buyNow: p.buyNow, train: p.train };
+  const act: ActArgs = { join: p.join, travelTo: p.travelTo, work: p.work, crime: p.crime, buyNow: p.buyNow, train: p.train, company: p.company };
   // casino.js drives the UI (blackjack table); work/travel would navigate away from it
   const casinoBetting = ns.isRunning(SCRIPTS.casinoTable, "home");
   const infiltrating = await infiltrationModule(ns, data, p, dcfg, casinoBetting, event);
@@ -600,6 +602,7 @@ async function factionsModule(
     act.crime = null;
     act.travelTo = null;
     act.train = null;
+    act.company = null;
   }
   // the planner is stateless; a cooldown stops it from bouncing between cities
   if (act.travelTo) {
@@ -610,6 +613,14 @@ async function factionsModule(
   if (!cfg.manageWork) {
     act.work = null;
     act.crime = null;
+    act.company = null;
+  }
+  // company-route data, every 5 min (or on a change): is company work the better path?
+  const routeKey = `${p.company?.company ?? ""}|${p.companyRoutes[0]?.faction ?? ""}`;
+  if (Date.now() - lastCompanyLog > 5 * 60_000 || routeKey !== lastCompanyKey) {
+    lastCompanyLog = Date.now();
+    lastCompanyKey = routeKey;
+    appendJsonl(ns, DATA.company, { t: Date.now(), chosen: p.company, grindScore: p.grindScore, routes: p.companyRoutes, companies: data.companies }, 2000);
   }
   if (dcfg.manageGang) await gangModule(ns, data, p, dcfg, event);
 

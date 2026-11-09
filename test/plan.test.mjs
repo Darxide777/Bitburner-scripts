@@ -258,3 +258,36 @@ test("no ETA-based install before observed rates exist (right after a daemon res
   assert.ok(plan(input(w, later)).install, "with rates: next aug ∞ away → install");
   assert.equal(plan(input(w, { ...later, ratesReady: false })).install, null, "no rates yet → wait");
 });
+
+function megaWorld(companyRate) {
+  const w = world({ money: 1e15 });
+  w.factions.ECorp = fac({ augs: ["ECorp Aug"], requirements: [{ type: "companyReputation", company: "ECorp", reputation: 400_000 }] });
+  w.augs["ECorp Aug"] = aug({ repReq: 1000, price: 1e6, factions: ["ECorp"], stats: { hacking: 3 } }); // very valuable
+  w.companies = { ECorp: { rep: 0, favor: 0, job: null, position: "Software Engineering Intern", field: "Software", repPerSec: companyRate } };
+  return w;
+}
+
+test("company work: taken when its route beats the best faction grind, skipped otherwise", () => {
+  // fast company rep: 400k at 2000/s = 200 s, then 1000 rep at ~10/s → beats CyberSec's HackA
+  const fast = plan(input(megaWorld(2000)));
+  assert.equal(fast.company?.company, "ECorp");
+  assert.equal(fast.company?.field, "Software");
+  assert.equal(fast.work, null);
+  assert.equal(fast.companyRoutes[0].faction, "ECorp");
+  assert.ok(fast.companyRoutes[0].score > fast.grindScore * 1.2);
+  // slow company rep (400k at 1/s ≈ 4.6 days): keep grinding the faction
+  const slow = plan(input(megaWorld(1)));
+  assert.equal(slow.company, null);
+  assert.equal(slow.work?.faction, "CyberSec");
+  assert.ok(slow.companyRoutes.length === 1, "still logged for comparison");
+  // disabled
+  assert.equal(plan(input(megaWorld(2000)), { ...DEFAULT_PLAN, companyWork: false }).company, null);
+});
+
+test("company rep counts toward invites once earned", () => {
+  const w = megaWorld(2000);
+  w.companies.ECorp.rep = 400_000;
+  const p = plan(input(w));
+  assert.equal(p.company, null, "requirement met: nothing left to earn there");
+  assert.equal(p.companyRoutes.length, 0);
+});

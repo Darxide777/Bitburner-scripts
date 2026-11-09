@@ -25,6 +25,18 @@ export interface FactionInfo {
   requirements: PlayerRequirement[];
 }
 
+/** A company some wanted faction's invite needs (rep, or just a job there). */
+export interface CompanyInfo {
+  rep: number;
+  favor: number;
+  /** current job title there, if employed */
+  job: string | null;
+  /** best position we qualify for (current one if better), its field, and its rep/s */
+  position: string | null;
+  field: string | null;
+  repPerSec: number;
+}
+
 export interface FactionData {
   t: number;
   money: number;
@@ -52,6 +64,8 @@ export interface FactionData {
   augs: Record<string, AugInfo>;
   /** company -> job title */
   jobs: Record<string, string>;
+  /** companies that unjoined factions' invites depend on */
+  companies?: Record<string, CompanyInfo>;
   /** w0r1d_d43m0n status (only present after The Red Pill is installed). */
   /** inScan: reachable by scan() from home (newer versions may not link it in) */
   worldDaemon: { exists: boolean; inScan?: boolean; rooted: boolean; reqHack: number };

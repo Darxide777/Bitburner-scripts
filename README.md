@@ -86,6 +86,13 @@ collects faction/aug state and the planner decides:
   work type with the highest rep/s from Formulas. With nothing left to grind, it builds rep for
   NeuroFlux, then falls back to crime (karma toward a gang).
 - *travel / backdoor*: when a wanted faction is missing only a city or a backdoor, go get it.
+- *company work* (megacorp factions): for factions whose invite needs company rep or a job,
+  the route's value per second is the faction's best aug ÷ (company rep still needed at the
+  formula rate of the best position you qualify for + that aug's faction rep at your average
+  faction-work rate). It replaces faction work only when it beats the best grind by 20%
+  (`companyMargin`), or when there's nothing to grind. Applying again while employed is how
+  promotions happen, so the job is re-applied for each tick. Every evaluation is logged to
+  `data/company.txt` (routes, chosen job, grind score, company data) to judge it.
 - *buy*: nothing during a run. Each purchase multiplies remaining prices by 1.9 (×SF11
   discount), so everything is bought at install time, most expensive first (prereqs first).
   Where favor allows, donations cover rep gaps (never at factions without work, e.g.
@@ -308,7 +315,7 @@ faction-working.
 - [x] Casino: blackjack save-scumming for $10b per install
 - [x] Stanek's Gift: acceptance, layout solver, per-install charging
 - [x] IPvGO: rules engine, MCTS player, self-optimizing matchup choice
-- [ ] Company work → megacorp factions (ECorp, MegaCorp, KuaiGong, NWO, …)
+- [x] Company work → megacorp factions, when the route beats faction work (logged to judge it)
 - [ ] Hacking-XP mode when the hack level gates the next faction or w0r1d_d43m0n
 - [ ] Move the remaining recurring tasks onto the call proxy to shrink the home reserve
 - [x] Sleeves: karma for the gang, then one per grind faction; shock recovery; sleeve augs
