@@ -5,11 +5,12 @@
 //              accepting Stanek's Gift, so the daemon only allows it once Stanek is settled
 //   usePlayer  may run actions (always with Simulacrum, otherwise only when the player has
 //              nothing better to do); skills/city/faction are managed regardless
-import type { BladeburnerActionName, BladeburnerActionType, BladeburnerSkillName, CityName, NS } from "@ns";
+import type { BladeburnerActionName, BladeburnerActionType, BladeburnerBlackOpName, BladeburnerSkillName, CityName, NS } from "@ns";
 import { readJson, writeJson } from "../lib/io.js";
 import {
   chooseAction,
   DEFAULT_BB,
+  FINAL_BLACK_OP,
   pickSkill,
   SKILL_WEIGHTS,
   TYPE,
@@ -37,7 +38,16 @@ export interface BladeburnerStatus {
   skillPoints: number;
   skillsBought: number;
   note: string;
+  /** every Black Op done (Operation Daedalus included): the BitNode can be destroyed */
+  blackOpsDone: boolean;
+  nextBlackOp: { name: string; reqRank: number } | null;
+  /** rank Operation Daedalus needs, observed rank/s (10-minute window) and the ETA to it */
+  finalRank: number;
+  rankPerSec: number;
+  finalEtaSec: number | null;
 }
+
+const RATE_WINDOW_MS = 10 * 60_000;
 
 const CITIES: CityName[] = ["Sector-12", "Aevum", "Volhaven", "Chongqing", "New Tokyo", "Ishima"] as CityName[];
 const CITY_EVERY_MS = 60_000;
@@ -51,6 +61,8 @@ export async function main(ns: NS): Promise<void> {
   let started = null as { key: string; at: number; ms: number } | null;
   let lastCity = 0;
   let skillsBought = 0;
+  const samples: [number, number][] = [];
+  let finalRank = 0;
 
   while (true) {
     const ctl = readJson<BladeburnerControl>(ns, DATA.bladeburnerConfig, { canJoin: false, usePlayer: false });
@@ -67,6 +79,11 @@ export async function main(ns: NS): Promise<void> {
       skillPoints: 0,
       skillsBought,
       note: "",
+      blackOpsDone: false,
+      nextBlackOp: null,
+      finalRank,
+      rankPerSec: 0,
+      finalEtaSec: null,
     };
 
     // ---- join ----
@@ -82,6 +99,15 @@ export async function main(ns: NS): Promise<void> {
     }
     status.rank = B.getRank();
     if (status.rank >= 25) B.joinBladeburnerFaction(); // true if already a member
+    // rank rate → ETA to the final Black Op's rank (compare with the hacking route)
+    const now = Date.now();
+    samples.push([now, status.rank]);
+    while (samples.length > 2 && samples[0][0] < now - RATE_WINDOW_MS) samples.shift();
+    const [t0, r0] = samples[0];
+    status.rankPerSec = now - t0 > 30_000 ? Math.max(0, (status.rank - r0) / ((now - t0) / 1000)) : 0;
+    finalRank ||= B.getBlackOpRank(FINAL_BLACK_OP as BladeburnerBlackOpName);
+    status.finalRank = finalRank;
+    if (status.rankPerSec > 0) status.finalEtaSec = Math.max(0, finalRank - status.rank) / status.rankPerSec;
 
     // ---- skills ----
     for (let i = 0; i < 500; i++) {
@@ -131,6 +157,8 @@ export async function main(ns: NS): Promise<void> {
       ...B.getOperationNames().map((n) => info(TYPE.op as BladeburnerActionType, n)),
     ];
     const next = B.getNextBlackOp();
+    status.blackOpsDone = next === null;
+    status.nextBlackOp = next ? { name: next.name, reqRank: next.rank } : null;
     const nextBlackOp = next ? { ...info(TYPE.blackOp as BladeburnerActionType, next.name), reqRank: next.rank } : null;
     const d = chooseAction({ stamina: status.stamina, chaos: status.chaos, rank: status.rank, actions, nextBlackOp, resting }, cfg);
     resting = d.resting;

@@ -50,7 +50,7 @@ export interface BbConfig {
   minChanceBlackOp: number;
   /** operations never chosen: Raid needs communities and adds chaos, Stealth Retirement has tiny rank */
   skipOps: string[];
-  /** Operation Daedalus ends the BitNode; the hacking path (w0r1d_d43m0n) handles that */
+  /** Operation Daedalus wins the BitNode (then w0r1d_d43m0n can be destroyed without the hack level) */
   allowFinalBlackOp: boolean;
 }
 
@@ -63,7 +63,7 @@ export const DEFAULT_BB: BbConfig = {
   minChanceOp: 0.8,
   minChanceBlackOp: 0.95,
   skipOps: ["Raid", "Stealth Retirement Operation"],
-  allowFinalBlackOp: false,
+  allowFinalBlackOp: true,
 };
 
 export const FINAL_BLACK_OP = "Operation Daedalus";

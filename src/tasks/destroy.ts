@@ -6,6 +6,8 @@ import { DATA, SCRIPTS } from "../lib/paths.js";
 
 export async function main(ns: NS): Promise<void> {
   const next = Number(ns.args[1]) || 12;
+  // home files survive the reset: don't let the next node read "black ops done"
+  ns.write(DATA.bladeburner, "{}", "w");
   appendJsonl(ns, DATA.events, { t: Date.now(), kind: "destroy", msg: `destroying w0r1d_d43m0n → BN${next}` });
   ns.singularity.destroyW0r1dD43m0n(next, SCRIPTS.daemon);
 }

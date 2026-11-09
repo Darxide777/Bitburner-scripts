@@ -15,6 +15,9 @@ import type { FactionData, FactionInfo } from "./data.js";
 import { NFG, RED_PILL, SKIP_FACTIONS } from "./data.js";
 
 const BLADEBURNERS = "Bladeburners";
+/** every combat stat must reach this to join the Bladeburner division */
+const BB_JOIN_STAT = 100;
+const GYM_STAT = { strength: "str", defense: "def", dexterity: "dex", agility: "agi" } as const;
 import { evaluate, type ReqContext } from "./requirements.js";
 
 export interface PlanConfig {
@@ -31,6 +34,8 @@ export interface PlanConfig {
   manageWork: boolean;
   /** Unfocused work loses rep without Neuroreceptor; true = always focus when it matters. */
   focus: boolean;
+  /** Train combat to 100 and join Bladeburner before grinding factions (it can win the BitNode). */
+  bladeburnerFirst: boolean;
   weights: Record<string, number>;
 }
 
@@ -44,6 +49,7 @@ export const DEFAULT_PLAN: PlanConfig = {
   nextNode: 12,
   manageWork: true,
   focus: true,
+  bladeburnerFirst: true,
   // value of +100% in each multiplier (cost multipliers count as reductions)
   weights: {
     faction_rep: 4,
@@ -110,6 +116,8 @@ export interface Plan {
   destroy: boolean;
   /** Bladeburner actions may use the player's time (always with The Blade's Simulacrum). */
   bladeburner: boolean;
+  /** Gym training (combat stat) to reach the Bladeburner division's 100-in-each requirement. */
+  train: { stat: string; gym: string; city: string; focus: boolean } | null;
   /** Why destroy is (not) happening: Red Pill installed, w0r1d_d43m0n seen/rooted, hack level vs req. */
   worldDaemon: { redPill: boolean; exists: boolean; inScan?: boolean; rooted: boolean; reqHack: number; hackLevel: number };
   /** Fraction of money the economy module may spend on servers/RAM. */
@@ -142,7 +150,7 @@ export interface PlanInput {
   /** Faction the player is working for right now, if any (keeps the NeuroFlux grind from hopping). */
   currentWork?: string | null;
   /** Bladeburner manager state: in the division, and whether actions can run alongside work. */
-  bladeburner?: { inDivision: boolean; simulacrum: boolean };
+  bladeburner?: { inDivision: boolean; simulacrum: boolean; canJoin?: boolean };
 }
 
 export function augValue(stats: Record<string, number>, weights: Record<string, number>): number {
@@ -284,7 +292,15 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
   let crime: string | null = null;
   // with the Simulacrum, actions run alongside whatever work is chosen
   let bladeburner = !!input.bladeburner?.inDivision && !!input.bladeburner.simulacrum;
-  if (cfg.manageWork) {
+  let train: Plan["train"] = null;
+  const bbIn = input.bladeburner;
+  const weakest = (["strength", "defense", "dexterity", "agility"] as const)
+    .map((k) => [k, data.skills[k] ?? 0] as const)
+    .sort((a, b) => a[1] - b[1])[0];
+  if (cfg.manageWork && cfg.bladeburnerFirst && bbIn?.canJoin && !bbIn.inDivision && weakest[1] < BB_JOIN_STAT) {
+    train = { stat: GYM_STAT[weakest[0]], gym: "Powerhouse Gym", city: "Sector-12", focus: cfg.focus && !data.hasNeuroreceptor };
+    notes.push(`training ${weakest[0]} (${Math.floor(weakest[1])}/${BB_JOIN_STAT}) to join Bladeburner`);
+  } else if (cfg.manageWork) {
     const grind = pending.filter((c) => c.repGap > 0 && c.donation === 0 && F[c.faction].bestWork && F[c.faction].joined);
     const target = grind.sort((a, b) => b.value / Math.max(1, b.repEta) - a.value / Math.max(1, a.repEta))[0];
     if (target) {
@@ -393,7 +409,7 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
 
   return {
     join,
-    travelTo,
+    travelTo: train ? null : travelTo, // stay at the gym while training
     backdoor,
     work,
     crime,
@@ -401,6 +417,7 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     install,
     destroy,
     bladeburner,
+    train,
     worldDaemon: { redPill: data.installed.includes(RED_PILL), ...data.worldDaemon, hackLevel: data.hackLevel },
     infraSpend,
     ready,

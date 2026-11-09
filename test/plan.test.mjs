@@ -210,3 +210,20 @@ test("idle player goes to Bladeburner (before NeuroFlux) only without the Simula
   assert.equal(none.bladeburner, false);
   assert.equal(none.work?.faction, "CyberSec");
 });
+
+test("Bladeburner first: train the weakest combat stat before grinding, only once joining is safe", () => {
+  const w = world({ skills: { hacking: 100, strength: 150, defense: 40, dexterity: 120, agility: 90 } });
+  const p = plan(input(w, { bladeburner: { inDivision: false, simulacrum: false, canJoin: true } }));
+  assert.deepEqual(p.train && [p.train.stat, p.train.gym], ["def", "Powerhouse Gym"]);
+  assert.equal(p.work, null);
+  assert.equal(p.travelTo, null);
+  // Stanek not settled yet → no training, normal grind
+  const wait = plan(input(w, { bladeburner: { inDivision: false, simulacrum: false, canJoin: false } }));
+  assert.equal(wait.train, null);
+  assert.equal(wait.work?.faction, "CyberSec");
+  // stats reached / already joined / disabled → no training
+  const strong = world({ skills: { hacking: 100, strength: 100, defense: 100, dexterity: 100, agility: 100 } });
+  assert.equal(plan(input(strong, { bladeburner: { inDivision: false, simulacrum: false, canJoin: true } })).train, null);
+  assert.equal(plan(input(w, { bladeburner: { inDivision: true, simulacrum: true, canJoin: true } })).train, null);
+  assert.equal(plan(input(w, { bladeburner: { inDivision: false, simulacrum: false, canJoin: true } }), { ...DEFAULT_PLAN, bladeburnerFirst: false }).train, null);
+});

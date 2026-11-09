@@ -39,12 +39,14 @@ test("chaos → Diplomacy, uncertain estimates → Field Analysis", () => {
   assert.equal(pick({ actions: fuzzy }), "Field Analysis");
 });
 
-test("black ops: when ranked and near-certain, never the BitNode-ending one by default", () => {
+test("black ops: when ranked and near-certain; the BitNode-ending one unless disabled", () => {
   const bo = (name, chance, reqRank = 500) => ({ ...act("Black Operations", name, { chance: [chance, chance] }), reqRank });
   assert.equal(pick({ nextBlackOp: bo("Operation Typhoon", 0.99) }), "Operation Typhoon");
   assert.equal(pick({ nextBlackOp: bo("Operation Typhoon", 0.9) }), "Retirement");
   assert.equal(pick({ nextBlackOp: bo("Operation Typhoon", 0.99, 5000) }), "Retirement");
-  assert.equal(pick({ nextBlackOp: bo("Operation Daedalus", 1) }), "Retirement");
+  assert.equal(pick({ nextBlackOp: bo("Operation Daedalus", 1) }), "Operation Daedalus");
+  const off = chooseAction(state({ nextBlackOp: bo("Operation Daedalus", 1) }), { ...DEFAULT_BB, allowFinalBlackOp: false });
+  assert.equal(off.action.name, "Retirement");
 });
 
 test("fallbacks: Incite Violence when contracts ran out, else Training", () => {

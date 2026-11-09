@@ -287,7 +287,16 @@ let bladeburnerWanted = false;
  * settled (accepted, or impossible/disabled): with SF7.3, joining grants The Blade's
  * Simulacrum, and owning it blocks accepting the gift for the rest of the BitNode.
  */
-function bladeburnerModule(
+/** true once we've joined the Bladeburner division (this BitNode) */
+let bbInDivision = false;
+
+/** Joining is safe once Stanek's Gift is accepted, or can't/won't be (see bladeburnerModule). */
+function bladeburnerCanJoin(data: FactionData, dcfg: DaemonConfig): boolean {
+  if (!dcfg.manageBladeburner || (!(data.sourceFiles["7"] > 0) && data.node !== 7)) return false;
+  return data.installed.includes(GENESIS) || (stanekStatus !== null && stanekStatus.state !== "accepted");
+}
+
+async function bladeburnerModule(
   ns: NS,
   data: FactionData,
   p: Plan,
@@ -298,8 +307,15 @@ function bladeburnerModule(
   bladeburnerWanted = false;
   if (!dcfg.manageBladeburner) return;
   if (!(data.sourceFiles["7"] > 0) && data.node !== 7) return; // no API access
-  const stanekSettled = data.installed.includes(GENESIS) || (stanekStatus !== null && stanekStatus.state !== "accepted");
+  const stanekSettled = bladeburnerCanJoin(data, dcfg);
   const ctl: BladeburnerControl = { canJoin: stanekSettled, usePlayer: p.bladeburner && !casinoRunning, cfg: dcfg.bladeburner };
+  // join as soon as the stats allow, even before home can hold the manager: the Simulacrum
+  // (SF7.3) and rank both start then. One-off proxy call, 4 GB for a moment.
+  const combat = ["strength", "defense", "dexterity", "agility"].every((k) => (data.skills[k] ?? 0) >= 100);
+  if (stanekSettled && combat && !bbInDivision) {
+    bbInDivision = (await call<boolean>(ns, "bladeburner.joinBladeburnerDivision")) === true;
+    if (bbInDivision) event("bladeburner", "joined the Bladeburner division");
+  }
   writeJson(ns, DATA.bladeburnerConfig, ctl);
   if (ns.isRunning(SCRIPTS.bladeburnerManager, "home")) {
     bladeburnerWanted = true;
@@ -345,27 +361,31 @@ async function factionsModule(
       sinceInstall: m.sinceInstall,
       currentWork: work?.factionName ?? null,
       bladeburner: {
-        inDivision: readJson<Partial<BladeburnerStatus>>(ns, DATA.bladeburner, {}).inDivision === true,
+        inDivision: bbInDivision || readJson<Partial<BladeburnerStatus>>(ns, DATA.bladeburner, {}).inDivision === true,
         simulacrum: data.installed.includes(SIMULACRUM),
+        canJoin: bladeburnerCanJoin(data, dcfg),
       },
     },
     cfg,
   );
 
-  if (p.destroy) {
-    event("destroy", "w0r1d_d43m0n is ready — destroying the BitNode");
+  // Operation Daedalus done also unlocks the destroy, with no hack level needed
+  const bbWon = cfg.autoDestroy && readJson<Partial<BladeburnerStatus>>(ns, DATA.bladeburner, {}).blackOpsDone === true;
+  if (p.destroy || bbWon) {
+    event("destroy", `${bbWon ? "Bladeburner black ops complete" : "w0r1d_d43m0n is ready"} — destroying the BitNode`);
     freeHome(ns);
     spawnTask(ns, "tasks/destroy.js", [cfg.nextNode]);
     return p;
   }
 
-  const act: ActArgs = { join: p.join, travelTo: p.travelTo, work: p.work, crime: p.crime, buyNow: p.buyNow };
+  const act: ActArgs = { join: p.join, travelTo: p.travelTo, work: p.work, crime: p.crime, buyNow: p.buyNow, train: p.train };
   // casino.js drives the UI (blackjack table); work/travel would navigate away from it
   const casinoRunning = ns.isRunning(SCRIPTS.casinoTable, "home");
   if (casinoRunning) {
     act.work = null;
     act.crime = null;
     act.travelTo = null;
+    act.train = null;
   }
   // the planner is stateless; a cooldown stops it from bouncing between cities
   if (act.travelTo) {
@@ -386,7 +406,7 @@ async function factionsModule(
     event("error", `stanek failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  bladeburnerModule(ns, data, p, dcfg, casinoRunning, event);
+  await bladeburnerModule(ns, data, p, dcfg, casinoRunning, event);
 
   // sleeves first, so none of them is sitting on the faction the player is about to work for
   if (dcfg.manageSleeves && s.sleeves > 0) {
@@ -536,7 +556,7 @@ function draw(
     L.push("");
     L.push(
       bb.inDivision
-        ? `bladeburner: rank ${num(bb.rank ?? 0)}  ${bb.city} chaos ${(bb.chaos ?? 0).toFixed(0)}  stamina ${bb.stamina ? ((bb.stamina[0] / Math.max(1, bb.stamina[1])) * 100).toFixed(0) : "?"}%  ${bb.action ? `${bb.action.name} (${bb.why})` : bb.note}`
+        ? `bladeburner: rank ${num(bb.rank ?? 0)}${bb.rankPerSec ? ` (+${num(bb.rankPerSec)}/s, Daedalus ${num(bb.finalRank ?? 0)} in ${bb.finalEtaSec != null ? dur(bb.finalEtaSec * 1000) : "?"})` : ""}  ${bb.city} chaos ${(bb.chaos ?? 0).toFixed(0)}  stamina ${bb.stamina ? ((bb.stamina[0] / Math.max(1, bb.stamina[1])) * 100).toFixed(0) : "?"}%  ${bb.action ? `${bb.action.name} (${bb.why})` : bb.note}`
         : `bladeburner: ${bb.note}`,
     );
   }
