@@ -156,6 +156,8 @@ sells; it measures each purchase's real effect and uses that instead of the 2% d
 Production (level/RAM/cores/servers) is bought by payback time — it must pay back within half
 the expected rest of the run, since installs wipe hacknet servers — with the planner's infra
 share of cash, and not while the casino bets. `data/hacknet.txt` shows the ranked options.
+Hacknet servers never run scripts (`isHacknet` in `lib/net.ts`): RAM in use lowers their hash
+production, and hashes sell for money anyway.
 
 **Stocks** (`lib/plan/stocks.ts` decides, `stocks/manager.ts` acts). Buys a WSE account, TIX API
 and 4S Market Data TIX API once each costs ≤20% of cash (they survive installs), then trades on
@@ -272,7 +274,7 @@ faction-working.
       territory warfare, ascension
 - [ ] Gang: account for v3's install penalty on ascension multipliers (`getInstallResult`)
 - [x] Hacknet servers: data-priced hash spending, payback-based production
-- [ ] Hacknet: value SP, gym/study and company favor; use hacknet RAM when it beats hashes
+- [ ] Hacknet: value SP, gym/study and company favor
 - [x] Bladeburner: join (after Stanek), skills, city, stamina/chaos control, contracts/ops/black ops
 - [x] Bladeburner first: gym training to join early, Operation Daedalus as a win condition
 - [x] Sleeves on Bladeburner contracts; shock-recovery rotation + experiment telemetry

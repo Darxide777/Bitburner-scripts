@@ -10,7 +10,7 @@ import type { ActiveFragment, BitNodeMultipliers, Fragment, NS } from "@ns";
 import { call, callEach } from "./call.js";
 import type { FactionData } from "./plan/data.js";
 import { NFG } from "./plan/data.js";
-import { allHosts } from "./net.js";
+import { allHosts, isHacknet } from "./net.js";
 import {
   BOOSTER,
   cells,
@@ -219,7 +219,7 @@ export async function manageStanek(
     .sort((a, b) => b.threads * b.mult - a.threads * a.mult);
   if (!blocks.length) return status;
   const eff = (b: { threads: number; mult: number }) => b.threads * b.mult;
-  const pool = hosts.filter((h) => ns.hasRootAccess(h) && !h.startsWith("hacknet-")).reduce((a, h) => a + ns.getServerMaxRam(h), 0);
+  const pool = hosts.filter((h) => ns.hasRootAccess(h) && !isHacknet(h)).reduce((a, h) => a + ns.getServerMaxRam(h), 0);
   const lowest = Math.min(...stats.map((f) => f.highestCharge));
   const peakBlock = blocks[0];
   const needPeak = lowest < eff(peakBlock) * 0.5 || stats.some((f) => f.numCharge < 1);

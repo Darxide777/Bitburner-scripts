@@ -12,7 +12,7 @@
 // Steered by data/config.txt (written by the daemon/planner):
 //   homeReserve (GB kept free on home), maxTargets, spacing (ms), share (0..1)
 import type { NS, Player, Server } from "@ns";
-import { allHosts } from "../lib/net.js";
+import { allHosts, isHacknet } from "../lib/net.js";
 import { readJson, writeJson } from "../lib/io.js";
 import { DATA, SCRIPTS } from "../lib/paths.js";
 
@@ -75,7 +75,7 @@ export async function main(ns: NS): Promise<void> {
     // ---- RAM pool ----
     const pool: Pool = new Map();
     for (const h of hosts) {
-      if (h.startsWith("hacknet-") || !ns.hasRootAccess(h) || cfg.skipHosts?.includes(h)) continue;
+      if (isHacknet(h) || !ns.hasRootAccess(h) || cfg.skipHosts?.includes(h)) continue;
       const max = ns.getServerMaxRam(h);
       if (max <= 0) continue;
       if (!ready.has(h) || !ns.fileExists(SCRIPTS.weaken, h)) {
@@ -181,7 +181,7 @@ function calcBatch(ns: NS, s: Server, p: Player, f: number, ramOf: Record<string
 function rankTargets(ns: NS, hosts: string[], p: Player, ramOf: Record<string, number>, formulas: boolean): string[] {
   const scored: [string, number][] = [];
   for (const h of hosts) {
-    if (h === "home" || h.startsWith("hacknet-") || !ns.hasRootAccess(h)) continue;
+    if (h === "home" || isHacknet(h) || !ns.hasRootAccess(h)) continue;
     if (ns.getServerMaxMoney(h) <= 0 || ns.getServerRequiredHackingLevel(h) > p.skills.hacking) continue;
     if (!formulas) {
       scored.push([h, ns.getServerMaxMoney(h) / ns.getServerRequiredHackingLevel(h)]);
