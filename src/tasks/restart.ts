@@ -13,6 +13,7 @@ const MANAGERS: string[] = [
   SCRIPTS.stocksManager,
   SCRIPTS.bladeburnerManager,
   SCRIPTS.hacknetManager,
+  SCRIPTS.corpManager,
 ];
 
 export async function main(ns: NS): Promise<void> {

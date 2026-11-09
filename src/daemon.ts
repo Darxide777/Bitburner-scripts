@@ -34,6 +34,8 @@ import { DEFAULT_STOCKS, type StockConfig } from "./lib/plan/stocks.js";
 import type { StocksControl, StocksStatus } from "./stocks/manager.js";
 import type { HacknetControl, HacknetStatus } from "./hacknet/manager.js";
 import type { HacknetConfig } from "./lib/plan/hacknet.js";
+import type { CorpConfig } from "./lib/plan/corp.js";
+import type { CorpControl, CorpStatus } from "./corp/manager.js";
 
 interface DaemonConfig {
   tickMs: number;
@@ -57,6 +59,9 @@ interface DaemonConfig {
   manageContracts: boolean;
   contractsEveryMs: number;
   /** Trade stocks with 4S data (stocks/manager.js, ~37 GB) once home has stocksMinHomeGB. */
+  /** Corporation (corp/manager.js, needs SF3 or BN3): Agriculture, investors, dividends. */
+  manageCorp: boolean;
+  corp: Partial<CorpConfig>;
   /** Hacknet servers: spend hashes by value, buy production by payback (hacknet/manager.js). */
   manageHacknet: boolean;
   hacknet: Partial<HacknetConfig>;
@@ -85,6 +90,8 @@ const DEFAULTS: DaemonConfig = {
   gang: {},
   manageContracts: true,
   contractsEveryMs: 5 * 60_000,
+  manageCorp: true,
+  corp: {},
   manageHacknet: true,
   hacknet: {},
   manageStocks: true,
@@ -187,6 +194,14 @@ export async function main(ns: NS): Promise<void> {
       if (!ns.isRunning(SCRIPTS.hacknetManager, "home") && ns.exec(SCRIPTS.hacknetManager, "home")) event("hacknet", "started hacknet manager");
     }
 
+    // ---- corporation (SF3 / BN3): creation waits for spare cash and no casino bets ----
+    const corpOk = cfg.manageCorp && !!s && ((s.sourceFiles["3"] ?? 0) > 0 || s.node === 3);
+    if (corpOk) {
+      const ctl: CorpControl = { allowCreate: !ns.isRunning(SCRIPTS.casinoTable, "home"), cfg: cfg.corp };
+      writeJson(ns, DATA.corpConfig, ctl);
+      if (!ns.isRunning(SCRIPTS.corpManager, "home") && ns.exec(SCRIPTS.corpManager, "home")) event("corp", "started corporation manager");
+    }
+
     // ---- coding contracts (and, once per build, the solver self-test on dummies) ----
     if (cfg.manageContracts) {
       if (!selftestStarted && readJson<{ build?: string }>(ns, DATA.contractsSelftest, {}).build !== build)
@@ -204,7 +219,10 @@ export async function main(ns: NS): Promise<void> {
     // keep room for the casino table while this install's $10b allowance is unclaimed
     if (s && cfg.casino && (s.earned.casino ?? 0) < CASINO_CAP) wanted.push(SCRIPTS.casinoTable);
     // plus room for the Stanek charger while it waits for a big enough block of home RAM
-    const reserve = homeReserve(ns, wanted, stanekStatus?.reserveGB ?? 0);
+    if (corpOk) wanted.push(SCRIPTS.corpManager);
+    // corp calls run through ~22 GB proxies (corporation functions cost 10–20 GB each)
+    const corpProxyGB = corpOk && ns.isRunning(SCRIPTS.corpManager, "home") ? 22 : 0;
+    const reserve = homeReserve(ns, wanted, (stanekStatus?.reserveGB ?? 0) + corpProxyGB);
     const hackCfg: Partial<HackConfig> = {
       homeReserve: reserve,
       // lend spare RAM to factions while we are working for one
@@ -627,6 +645,13 @@ function draw(
     L.push(`  ${pad(f, 24)} ${pad(num(rep), 9, true)} rep  ${pad(num(r.rep[f] ?? 0), 8, true)}/s  favor ${num(s.favor[f] ?? 0, 0)}`);
   if (s.invites.length) L.push(`  invites: ${s.invites.join(", ")}`);
 
+  const co = readJson<Partial<CorpStatus>>(ns, DATA.corp, {});
+  if (co.t && Date.now() - co.t < 300_000)
+    L.push(
+      co.exists
+        ? `corp: funds ${money(co.funds ?? 0)}  ${money((co.revenue ?? 0) - (co.expenses ?? 0))}/s profit  ${co.cities ?? 0} cities, ${co.employees ?? 0} staff  ${co.public ? `public, dividends ${((co.dividendRate ?? 0) * 100).toFixed(0)}%` : `round ${co.round} offer ${money(co.offer ?? 0)}`}${co.note ? `  (${co.note})` : ""}`
+        : `corp: ${co.note}`,
+    );
   const hn = readJson<Partial<HacknetStatus>>(ns, DATA.hacknet, {});
   if (hn.t && Date.now() - hn.t < 120_000)
     L.push(

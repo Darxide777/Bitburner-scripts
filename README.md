@@ -54,6 +54,7 @@ daemon.js                 orchestrator: telemetry → metrics → planner module
 ├─ gang/manager.js        long-running gang manager, ticks on every gang update
 ├─ stanek/charge.js       one big charging process for Stanek's Gift (spawned after installs)
 ├─ go/play.js             IPvGO manager: our own MCTS player + matchup picker
+├─ corp/manager.js        corporation: Agriculture, investors, dividends (all calls via proxy, SF3)
 ├─ hacknet/manager.js     hacknet servers: hashes by value, production by payback (~10 GB, SF9)
 ├─ stocks/manager.js      4S-forecast stock trader, longs + shorts (~37 GB, home ≥ 512 GB)
 ├─ bladeburner/manager.js Bladeburner: join, skills, city, actions (~73 GB, home ≥ 512 GB)
@@ -144,6 +145,19 @@ and crime). Each update:
 - otherwise the contract/operation with the most expected rank/s (≥70% contracts, ≥80% ops;
   Raid and Stealth Retirement skipped), without abandoning an action halfway
 - skills bought greedily by weight per point; moves to the city with the largest estimated population
+
+**Corporation** (`lib/plan/corp.ts` decides, `corp/manager.ts` acts; needs SF3). Every corp
+function costs 10–20 GB, so all of them run through the call proxy (peak ~22 GB, which the
+daemon keeps free on home). The corp survives installs and resets on a BitNode destroy. It is
+created once its $150b is ≤10% of cash (never while the casino bets). Once per corp cycle:
+Warehouse/Office API and Smart Supply unlocks → an Agriculture division in all six cities with
+warehouses, Smart Supply and Plants/Food sold at MAX/MP → offices staffed to size with a fixed
+job split, tea and parties above 95% energy/morale → boost materials (Hardware, Robots, AI
+Cores, Real Estate) in the optimal mix for `boostFrac` (50%) of each warehouse — the closed-form
+maximum of Π(1 + 0.002·qᵢ)^fᵢ for the space → research (Hi-Tech R&D Lab, Market-TA.I/II, AutoBrew,
+AutoPartyManager…) → the cheapest of warehouse/office/corp upgrades/AdVert within 20% of funds →
+investment rounds 1–2, each accepted once its offer has stopped growing (<1% over 5 cycles) →
+then go public selling no shares and pay `dividendRate` (10%) of profit to you.
 
 **Hacknet** (`lib/plan/hacknet.ts` decides, `hacknet/manager.ts` acts; needs SF9). Every hash
 upgrade is priced in money-equivalent $ per hash from measured data: Sell for Money ($1m / 4
@@ -282,6 +296,7 @@ faction-working.
 - [x] Coding contracts: all 30 types, per-build self-test against the game
 - [x] Stock market: 4S forecasts, longs + shorts, liquidation before install
 - [ ] Stock market: pre-4S trading from price history
-- [ ] Corporation
+- [x] Corporation: Agriculture, boost materials, research, investment rounds, dividends
+- [ ] Corporation: product division (Tobacco), exports, dividend rate from data
 - [ ] IPvGO cheats (SF14 `ns.go.cheat`) where the success chance is worth the risk
 - [ ] Endgame: Daedalus → The Red Pill → w0r1d_d43m0n, then auto-continue into the next BN12 level
