@@ -8,7 +8,7 @@
 //   3. cloud servers — buy until the limit, then double the smallest
 //   4. home cores — modest boost to grow/weaken on home
 import type { NS, ProgramName } from "@ns";
-import { task } from "../lib/task.js";
+import { task } from "../lib/task-main.js";
 
 const PROGRAMS = ["BruteSSH.exe", "FTPCrack.exe", "relaySMTP.exe", "HTTPWorm.exe", "SQLInject.exe", "Formulas.exe"];
 

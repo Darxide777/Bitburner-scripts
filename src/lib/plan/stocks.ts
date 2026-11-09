@@ -115,8 +115,8 @@ export interface PreConfig {
 export const DEFAULT_PRE: PreConfig = { longWindow: 20, shortWindow: 8, enterEdge: 0.1, flipEdge: 0.1, minTrades: 10, waitFor4sSec: 900 };
 
 /** Share of up-moves and mean |relative move| over the last `window` moves of `prices`. */
-export function estimateFromPrices(prices: number[], window: number): { forecast: number; volatility: number; moves: number } {
-  const p = prices.slice(-(window + 1));
+export function estimateFromPrices(prices: number[], span: number): { forecast: number; volatility: number; moves: number } {
+  const p = prices.slice(-(span + 1));
   let ups = 0;
   let moves = 0;
   let absSum = 0;

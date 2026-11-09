@@ -2,7 +2,7 @@
 // Runs once per daemon tick as a temporary script, so its (large) RAM cost is
 // only held for a few milliseconds.
 import type { NS } from "@ns";
-import { task } from "../lib/task.js";
+import { task } from "../lib/task-main.js";
 import type { Snapshot } from "../lib/types.js";
 
 export async function main(ns: NS): Promise<void> {

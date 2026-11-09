@@ -42,7 +42,6 @@ daemon.js                 orchestrator: telemetry → metrics → planner module
 ├─ tasks/*.js             short-lived scripts for RAM-expensive APIs (Singularity, Gang, …)
 │   ├─ snapshot.js        one-shot telemetry probe (player, money sources, rep, karma, gang…)
 │   ├─ economy.js         TOR, port openers, home RAM/cores, cloud servers
-│   ├─ factions-act.js    join / travel / work / crime / buy The Red Pill
 │   ├─ backdoor.js        connect along the path and install a backdoor (spawned, not awaited)
 │   ├─ contracts.js       solve every coding contract on the network (every 5 min)
 │   ├─ contracts-selftest.js  every solver vs. the game's dummy contracts, once per build
@@ -74,8 +73,15 @@ daemon stays small (~5 GB) and runs expensive calls elsewhere:
 
 The game's RAM calculator charges for any identifier, including property names, that matches
 an API function name anywhere in the script's import tree. So `x.travel` costs 4 GB (it matches
-`sleeve.travel`) and `{ share }` costs 2.4 GB. Hence the odd names in places (`travelTo`,
-`hackStatus`); `tools/ram-audit.mjs` catches regressions.
+`sleeve.travel`) and `{ share }` costs 2.4 GB. Worst of all, any reference named `document` **or
+`window`** costs the 25 GB DOM charge — a metrics field called `window` once made the daemon 33 GB
+instead of ~8. Hence the odd names in places (`travelTo`, `hackStatus`, `spanMs`);
+`node tools/ram-audit.mjs dist/<script>.js <RamCostGenerator.ts>` catches regressions (the cost
+table is in the game's source map, `src/Netscript/RamCostGenerator.ts`).
+
+Faction actions run from the daemon through the call proxy (`lib/act.ts`), so the biggest
+recurring task — which sets the home reserve — is `tasks/economy.js` (~20 GB); `contracts.js`
+only runs on spare RAM. `data/status.txt` → `ram` shows each task's and home user's actual cost.
 
 **Factions & augments** (`lib/plan/factions.ts`, pure and unit-tested). Every 15 s the daemon
 collects faction/aug state and the planner decides:
@@ -360,7 +366,8 @@ it in the hacking reserve, and `tasks/restart.js` restarts it on every new build
 - [x] IPvGO: rules engine, MCTS player, self-optimizing matchup choice
 - [x] Company work → megacorp factions, when the route beats faction work (logged to judge it)
 - [ ] Hacking-XP mode when the hack level gates the next faction or w0r1d_d43m0n
-- [ ] Move the remaining recurring tasks onto the call proxy to shrink the home reserve
+- [x] Shrink the home reserve: daemon 33 → ~8 GB (`window` DOM charge), faction actions via the
+      proxy (34 GB task gone), contracts on spare RAM, corp proxy reserve only with a corp
 - [x] Sleeves: karma for the gang, then one per grind faction; shock recovery; sleeve augs
 - [x] Gang: creation, recruit, equipment, training, respect/money mode, wanted control,
       territory warfare, ascension

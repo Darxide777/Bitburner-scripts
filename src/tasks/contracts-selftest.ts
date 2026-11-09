@@ -6,7 +6,7 @@ import type { NS } from "@ns";
 import { SOLVERS } from "../lib/contracts.js";
 import { appendJsonl, replacer } from "../lib/io.js";
 import { DATA } from "../lib/paths.js";
-import { task } from "../lib/task.js";
+import { task } from "../lib/task-main.js";
 
 export interface SelftestResult {
   build: string;

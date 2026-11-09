@@ -9,9 +9,9 @@ import { dirname, resolve } from "node:path";
 
 const [entry, costFile] = process.argv.slice(2);
 const src = readFileSync(costFile, "utf8");
-const consts = {};
+const consts = Object.create(null); // no prototype: "toString" etc. must not look like API names
 for (const m of src.matchAll(/^\s+(\w+): ([\d.]+),/gm)) consts[m[1]] ??= Number(m[2]);
-const cost = {};
+const cost = Object.create(null);
 for (const m of src.matchAll(/^\s+(\w+): (.+?),?\s*$/gm)) {
   const [, name, expr] = m;
   const num = expr.match(/^([\d.]+)/);
@@ -30,7 +30,7 @@ const hits = new Map();
     if (ts.isImportDeclaration(n)) visitFile(resolve(dirname(file), n.moduleSpecifier.text));
     // the game's walker skips non-computed object-literal keys and declaration names it never visits
     const isLiteralKey = n.parent && (ts.isPropertyAssignment(n.parent) || ts.isMethodDeclaration(n.parent)) && n.parent.name === n;
-    if (ts.isIdentifier(n) && !isLiteralKey && n.text in cost && !["ns", "main"].includes(n.text)) {
+    if (ts.isIdentifier(n) && !isLiteralKey && (n.text in cost || n.text === "document" || n.text === "window") && !["ns", "main"].includes(n.text)) {
       const set = hits.get(n.text) ?? new Set();
       set.add(file.replace(process.cwd() + "/", ""));
       hits.set(n.text, set);
@@ -38,6 +38,11 @@ const hits = new Map();
     ts.forEachChild(n, walk);
   })(sf);
 })(resolve(entry));
+// the game charges the DOM cost (25 GB) for any reference named document or window
+const DOM = 25;
+for (const name of ["document", "window"]) {
+  if (!cost[name]) cost[name] = DOM;
+}
 let total = 1.6;
 for (const [k, files] of [...hits].sort((a, b) => cost[b[0]] - cost[a[0]])) {
   total += cost[k];

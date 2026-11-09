@@ -8,7 +8,8 @@ import { GANG_KARMA } from "./paths.js";
 import { INCOME_KEYS, type IncomeKey, type Snapshot } from "./types.js";
 
 export interface Rates {
-  window: number; // ms actually covered
+  /** ms actually covered (not `window`: that identifier costs 25 GB, see README "RAM model") */
+  spanMs: number;
   income: number; // $/s, all income sources
   bySource: Record<IncomeKey, number>;
   rep: Record<string, number>; // rep/s per faction
@@ -51,7 +52,7 @@ export class MetricsTracker {
   rates(windowMs: number): Rates {
     const now = this.latest();
     const empty: Rates = {
-      window: 0,
+      spanMs: 0,
       income: 0,
       bySource: Object.fromEntries(INCOME_KEYS.map((k) => [k, 0])) as Record<IncomeKey, number>,
       rep: {},
@@ -76,7 +77,7 @@ export class MetricsTracker {
       repTotal += Math.max(0, v);
     }
     return {
-      window: dt * 1000,
+      spanMs: dt * 1000,
       income: rate(income(now), income(old)),
       bySource,
       rep,
@@ -90,7 +91,7 @@ export class MetricsTracker {
     const s = this.latest();
     const short = this.rates(60_000);
     const long = this.rates(10 * 60_000);
-    const best = long.window >= 120_000 ? long : short;
+    const best = long.spanMs >= 120_000 ? long : short;
     let timeToGang = Infinity;
     if (s) {
       if (s.gang || s.karma <= GANG_KARMA) timeToGang = 0;
@@ -106,7 +107,7 @@ export class MetricsTracker {
     const have = s.rep[faction] ?? 0;
     if (have >= target) return 0;
     const m = this.metrics();
-    const r = (m.long.window >= 120_000 ? m.long : m.short).rep[faction] ?? 0;
+    const r = (m.long.spanMs >= 120_000 ? m.long : m.short).rep[faction] ?? 0;
     return r > 0 ? ((target - have) / r) * 1000 : Infinity;
   }
 
@@ -116,7 +117,7 @@ export class MetricsTracker {
     if (!s) return Infinity;
     if (s.money >= target) return 0;
     const m = this.metrics();
-    const r = (m.long.window >= 120_000 ? m.long : m.short).income;
+    const r = (m.long.spanMs >= 120_000 ? m.long : m.short).income;
     return r > 0 ? ((target - s.money) / r) * 1000 : Infinity;
   }
 }

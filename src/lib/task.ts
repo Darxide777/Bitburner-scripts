@@ -6,7 +6,6 @@
 // Caller side:  const r = await runTask<Snapshot>(ns, "tasks/snapshot.js", [arg1])
 // Task side:    export async function main(ns) { await task(ns, async (args) => ...) }
 import type { NS, ScriptArg } from "@ns";
-import { replacer } from "./io.js";
 import { TASK_DIR } from "./paths.js";
 
 interface Envelope<T> {
@@ -53,18 +52,6 @@ export async function runTask<T>(
   }
 }
 
-/** Wrap a task's body: handles args, errors and writing the result envelope. */
-export async function task<T>(ns: NS, body: (args: ScriptArg[]) => T | Promise<T>): Promise<void> {
-  ns.disableLog("ALL");
-  const [out, ...rest] = ns.args;
-  let env: Envelope<T>;
-  try {
-    env = { ok: true, value: await body(rest) };
-  } catch (e) {
-    env = { ok: false, error: e instanceof Error ? e.message : String(e) };
-  }
-  ns.write(String(out), JSON.stringify(env, replacer), "w");
-}
 
 /**
  * Start a task without waiting for it (for long-running work like backdoors, or

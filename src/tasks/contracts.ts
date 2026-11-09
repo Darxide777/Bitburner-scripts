@@ -6,7 +6,7 @@ import { SOLVERS } from "../lib/contracts.js";
 import { appendJsonl, readJson, writeJson } from "../lib/io.js";
 import { allHosts } from "../lib/net.js";
 import { DATA } from "../lib/paths.js";
-import { task } from "../lib/task.js";
+import { task } from "../lib/task-main.js";
 
 export interface ContractsState {
   solved: number;

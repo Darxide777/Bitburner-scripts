@@ -15,7 +15,7 @@ import { appendJsonl, readJson, writeJson } from "./lib/io.js";
 import { MetricsTracker, type Metrics } from "./lib/metrics.js";
 import { allHosts, portOpenerCount, rootAll } from "./lib/net.js";
 import { BUILD_MARKER, DATA, GANG_KARMA, SCRIPTS } from "./lib/paths.js";
-import { call, callEach } from "./lib/call.js";
+import { call, callEach, CallError } from "./lib/call.js";
 import { collectFactionData } from "./lib/plan/collect.js";
 import { NFG, type FactionData } from "./lib/plan/data.js";
 import { augValue, DEFAULT_PLAN, plan as makePlan, type Plan, type PlanConfig } from "./lib/plan/factions.js";
@@ -26,7 +26,7 @@ import { DEFAULT_STANEK, manageStanek, type StanekConfig, type StanekStatus } fr
 import { runTask, spawnTask } from "./lib/task.js";
 import type { Snapshot } from "./lib/types.js";
 import type { HackConfig } from "./hack/manager.js";
-import type { ActArgs } from "./tasks/factions-act.js";
+import { act as doActions, type ActArgs } from "./lib/act.js";
 import type { BladeburnerControl, BladeburnerStatus } from "./bladeburner/manager.js";
 import type { BbConfig } from "./lib/plan/bladeburner.js";
 import { DEFAULT_RECOVERY, type RecoveryConfig } from "./lib/plan/sleeves.js";
@@ -271,7 +271,8 @@ export async function main(ns: NS): Promise<void> {
     // room for infiltrate.js (+ its proxies) while the daemon wants it running
     if (readJson<{ active?: boolean }>(ns, DATA.infiltrationConfig, {}).active) wanted.push(SCRIPTS.infiltrate);
     // corp calls run through ~22 GB proxies (corporation functions cost 10–20 GB each)
-    const corpProxyGB = corpOk && ns.isRunning(SCRIPTS.corpManager, "home") ? 22 : 0;
+    // (only once a corporation exists: before that the manager just waits)
+    const corpProxyGB = corpOk && ns.isRunning(SCRIPTS.corpManager, "home") && readJson<{ exists?: boolean }>(ns, DATA.corp, {}).exists ? 22 : 0;
     const reserve = homeReserve(ns, wanted, (stanekStatus?.reserveGB ?? 0) + corpProxyGB);
     lastReserve = reserve;
     const hackCfg: Partial<HackConfig> = {
@@ -370,7 +371,9 @@ function freeHome(ns: NS): void {
 }
 
 /** Tasks that only run right before a reset; they get RAM by freeing home instead of a permanent reserve. */
-const ONE_OFF_TASKS = ["tasks/install.js", "tasks/destroy.js", "tasks/contracts-selftest.js", "tasks/restart.js"];
+// contracts.js too: it isn't time-critical, so it runs whenever there's spare RAM instead of
+// holding 24 GB of home back permanently
+const ONE_OFF_TASKS = ["tasks/install.js", "tasks/destroy.js", "tasks/contracts-selftest.js", "tasks/restart.js", "tasks/contracts.js"];
 
 /** RAM to keep free on home for tasks: the biggest frequently-run task + headroom. */
 function homeReserve(ns: NS, wanted: string[] = [], extraGB = 0): number {
@@ -402,7 +405,7 @@ function casinoModule(ns: NS, s: Snapshot, m: Metrics, event: (k: string, msg: s
   if ((s.earned.casino ?? 0) >= CASINO_CAP) return;
   if (s.money >= CASINO_CAP) return; // it could at most double what we already hold
   // don't trust an empty window: give the rate trackers a minute after (re)start
-  if (m.short.window < 60_000) return;
+  if (m.short.spanMs < 60_000) return;
   const hackRate = readJson<{ expectedPerSec?: number }>(ns, DATA.hack, {}).expectedPerSec ?? 0;
   const gangRate = (s.gang?.moneyRate ?? 0) * 5; // moneyGainRate is per 200 ms gang cycle
   const income = Math.max(m.short.income, m.long.income, gangRate + hackRate);
@@ -658,7 +661,7 @@ async function factionsModule(
   // money in stocks is money: tasks/install.js liquidates before buying
   const stocks = readJson<Partial<StocksStatus>>(ns, DATA.stocks, {});
   if (stocks.t && Date.now() - stocks.t < 120_000 && (stocks.value ?? 0) > 0) data.money += stocks.value!;
-  const r = m.long.window >= 120_000 ? m.long : m.short;
+  const r = m.long.spanMs >= 120_000 ? m.long : m.short;
   const work = s.work as { factionName?: string } | null;
   const p = makePlan(
     {
@@ -667,7 +670,7 @@ async function factionsModule(
       income: r.income,
       sinceInstall: m.sinceInstall,
       currentWork: work?.factionName ?? null,
-      ratesReady: m.long.window >= 120_000,
+      ratesReady: m.long.spanMs >= 120_000,
       bladeburner: {
         inDivision: bbInDivision || readJson<Partial<BladeburnerStatus>>(ns, DATA.bladeburner, {}).inDivision === true,
         simulacrum: data.installed.includes(SIMULACRUM),
@@ -762,9 +765,12 @@ async function factionsModule(
     }
   }
 
-  const done = await runTask<string[]>(ns, "tasks/factions-act.js", [JSON.stringify(act)]);
-  if (done.ok) for (const d of done.value ?? []) event("faction", d);
-  else if (done.reason !== "ram") event("error", `faction actions failed: ${done.error}`);
+  try {
+    for (const d of await doActions(ns, act, data.city)) event("faction", d);
+  } catch (e) {
+    // CallError = no RAM for a proxy right now: try again next tick
+    if (!(e instanceof CallError)) event("error", `faction actions failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
 
   if (p.backdoor.length && spawnTask(ns, "tasks/backdoor.js", [p.backdoor[0]]))
     event("backdoor", `installing backdoor on ${p.backdoor[0]}`);
@@ -783,7 +789,7 @@ async function factionsModule(
 }
 
 function metricsLine(s: Snapshot, m: Metrics, hack: { expectedPerSec?: number; poolTotal?: number }) {
-  const r = m.long.window >= 120_000 ? m.long : m.short;
+  const r = m.long.spanMs >= 120_000 ? m.long : m.short;
   return {
     t: s.t,
     node: s.node,
@@ -809,7 +815,7 @@ function metricsLine(s: Snapshot, m: Metrics, hack: { expectedPerSec?: number; p
 function trackRuns(ns: NS, s: Snapshot, tracker: MetricsTracker, event: (k: string, m: string, d?: unknown) => void) {
   const st = readJson<(DaemonState & { run?: DaemonState["cur"] }) | null>(ns, STATE_FILE, null);
   const m = tracker.metrics();
-  const r = m.long.window >= 120_000 ? m.long : m.short;
+  const r = m.long.spanMs >= 120_000 ? m.long : m.short;
   // migrate older state files (the field used to be called `run`) and repair partial ones
   if (st && !st.cur) {
     // bracket access: a bare `.run` would cost 1 GB (it matches ns.run in the RAM calculator)
@@ -864,7 +870,7 @@ function draw(
   plan: Plan | null,
   recent: string[],
 ) {
-  const r = m.long.window >= 120_000 ? m.long : m.short;
+  const r = m.long.spanMs >= 120_000 ? m.long : m.short;
   const L: string[] = [];
   L.push(`BN${s.node}  ·  ${dur(m.sinceInstall)} since install  ·  hack ${s.hackLevel}  ·  ports ${portOpenerCount(ns)}/5`);
   L.push(`money ${money(s.money)}   income ${money(m.short.income)}/s (1m)  ${money(m.long.income)}/s (10m)`);

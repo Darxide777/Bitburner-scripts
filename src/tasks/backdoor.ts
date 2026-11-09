@@ -3,7 +3,7 @@
 // without waiting. Leaves the terminal connected to home afterwards.
 import type { NS } from "@ns";
 import { pathTo } from "../lib/net.js";
-import { task } from "../lib/task.js";
+import { task } from "../lib/task-main.js";
 
 export async function main(ns: NS): Promise<void> {
   await task(ns, async (args) => {
