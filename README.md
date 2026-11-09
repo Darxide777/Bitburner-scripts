@@ -393,6 +393,28 @@ it in the hacking reserve, and `tasks/restart.js` restarts it on every new build
   your module uses
 - keep its RAM low by routing expensive API calls through `lib/call.ts`
 
+### Darknet automation
+
+The darknet suite under `src/user/dnet/` is game automation for Bitburner's fictional darknet:
+it explores in-game servers, solves the game's generated passwords, propagates helper scripts,
+and loots in-game caches. It only calls Bitburner's `ns.dnet`/Singularity APIs inside the
+single-player save; it does not touch real networks, hosts, or credentials. To enable it, merge
+this into `data/config.txt` (keep any other modules you already have):
+
+```json
+{"userModules": [{"script": "user/dnet/manager.js", "args": [], "minHomeGB": 0}]}
+```
+
+Alternatively, run `run user/dnet/enable.js` in the terminal; it merges that entry into
+`data/config.txt` without replacing your other settings.
+
+The manager starts `setup.js`, which buys the TOR router and DarkscapeNavigator.exe (requires
+SF4 Singularity access), and refreshes `user/dnet/charisma.txt`. It reserves `darkweb` plus
+every host in `user/dnet/passwords.json` in `data/user-reserve.txt`, and pauses while the
+daemon reports `uiBusy` or `installPlanned`. Generated state stays in `user/dnet/` on home:
+`passwords.json`, `charisma.txt`, the fixed `snap.json` snapshot, and a `rewards.txt` ledger of
+opened caches.
+
 ## Roadmap
 
 - [x] Tooling: TS build, Remote API sync with type refresh + telemetry pull

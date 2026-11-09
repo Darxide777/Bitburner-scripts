@@ -22,6 +22,7 @@ export const DATA = {
   nodes: "data/nodes.txt", // JSONL: one line per cleared BitNode
   context: "data/context.txt", // daemon context for user modules (overwritten every tick)
   userReserve: "data/user-reserve.txt", // { hosts: [...] } user modules want the hacking manager to leave alone
+  dnet: "data/dnet.txt", // darknet manager status
   company: "data/company.txt", // JSONL: company routes vs. faction grind (megacorp invites)
   grafting: "data/grafting.txt", // JSONL every 10 min: graftable augs valued vs. entropy and time
   infiltration: "data/infiltration.txt", // infiltration runs: measured rep/s per location
