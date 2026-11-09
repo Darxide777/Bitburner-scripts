@@ -13,6 +13,10 @@ export interface ContractsState {
   failed: string[]; // "host:file"
   unsupported: Record<string, number>; // type → count seen
   lastReward: string;
+  /** last scan: when, how many servers were checked and how many contracts were on them */
+  lastRun?: number;
+  hostsScanned?: number;
+  found?: number;
 }
 
 export async function main(ns: NS): Promise<void> {
@@ -21,8 +25,13 @@ export async function main(ns: NS): Promise<void> {
     const st = readJson<ContractsState>(ns, DATA.contracts, { solved: 0, failed: [], unsupported: {}, lastReward: "" });
     const failed = new Set(st.failed);
     const done: string[] = [];
-    for (const host of allHosts(ns)) {
+    const hosts = allHosts(ns);
+    st.lastRun = Date.now();
+    st.hostsScanned = hosts.length;
+    st.found = 0;
+    for (const host of hosts) {
       for (const file of ns.ls(host, ".cct")) {
+        st.found++;
         const id = `${host}:${file}`;
         if (failed.has(id)) continue;
         const kind = CC.getContractType(file, host);
