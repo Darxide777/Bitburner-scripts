@@ -29,6 +29,7 @@ import type { HackConfig } from "./hack/manager.js";
 import type { ActArgs } from "./tasks/factions-act.js";
 import type { BladeburnerControl, BladeburnerStatus } from "./bladeburner/manager.js";
 import type { BbConfig } from "./lib/plan/bladeburner.js";
+import { DEFAULT_RECOVERY, type RecoveryConfig } from "./lib/plan/sleeves.js";
 import { DEFAULT_STOCKS, type StockConfig } from "./lib/plan/stocks.js";
 import type { StocksControl, StocksStatus } from "./stocks/manager.js";
 
@@ -57,6 +58,8 @@ interface DaemonConfig {
   manageStocks: boolean;
   stocks: Partial<StockConfig>;
   stocksMinHomeGB: number;
+  /** Sleeve shock-recovery rotation (see lib/plan/sleeves.ts DEFAULT_RECOVERY). */
+  sleeveRecovery: Partial<RecoveryConfig>;
   manageBladeburner: boolean;
   /** Overrides for Bladeburner decisions (see lib/plan/bladeburner.ts DEFAULT_BB). */
   bladeburner: Partial<BbConfig>;
@@ -80,6 +83,7 @@ const DEFAULTS: DaemonConfig = {
   manageStocks: true,
   stocks: {},
   stocksMinHomeGB: 512,
+  sleeveRecovery: {},
   manageBladeburner: true,
   bladeburner: {},
   bladeburnerMinHomeGB: 512,
@@ -321,6 +325,7 @@ let bladeburnerWanted = false;
  * settled (accepted, or impossible/disabled): with SF7.3, joining grants The Blade's
  * Simulacrum, and owning it blocks accepting the gift for the rest of the BitNode.
  */
+let lastSleeveLog = 0;
 /** true once we've joined the Bladeburner division (this BitNode) */
 let bbInDivision = false;
 
@@ -363,7 +368,7 @@ async function bladeburnerModule(
 function summarizeSleeves(list: { kind: string; faction?: string; crime?: string }[]): string {
   const counts = new Map<string, number>();
   for (const a of list) {
-    const k = a.kind === "faction" ? a.faction! : a.kind === "crime" ? a.crime! : "recovery";
+    const k = a.kind === "faction" ? a.faction! : a.kind === "crime" ? a.crime! : a.kind === "bladeburner" ? "Bladeburner" : "recovery";
     counts.set(k, (counts.get(k) ?? 0) + 1);
   }
   return [...counts].map(([k, n]) => (n > 1 ? `${k} ×${n}` : k)).join(", ");
@@ -458,7 +463,16 @@ async function factionsModule(
         act.work?.faction ?? null,
         needKarma,
         casinoRunning ? 0 : undefined, // no sleeve aug purchases while casino.js is betting
+        {
+          recovery: { ...DEFAULT_RECOVERY, ...dcfg.sleeveRecovery },
+          bladeburner: bbInDivision && readJson<Partial<BladeburnerStatus>>(ns, DATA.bladeburner, {}).blackOpsDone !== true,
+        },
       );
+      // shock-recovery experiment: one line per minute (tools/sleeve-shock.mjs to analyse later)
+      if (Date.now() - lastSleeveLog > 60_000) {
+        lastSleeveLog = Date.now();
+        appendJsonl(ns, DATA.sleeves, { t: Date.now(), sleeves: rep.rows, observedRep: m.short.rep, sleeveIncome: m.short.bySource.sleeves ?? 0 }, 20_000);
+      }
       for (const c of rep.changed) event("sleeve", c);
       if (rep.augsBought) event("sleeve", `bought ${rep.augsBought} sleeve augmentation(s)`);
       sleeveSummary = summarizeSleeves(rep.assignments);

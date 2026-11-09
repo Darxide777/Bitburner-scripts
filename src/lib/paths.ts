@@ -15,6 +15,7 @@ export const DATA = {
   goConfig: "data/go-config.txt", // IPvGO tunables
   contracts: "data/contracts.txt", // coding contracts: totals + ones we failed (never retried)
   contractsSelftest: "data/contracts-selftest.txt", // per-build check of every solver on dummy contracts
+  sleeves: "data/sleeves.txt", // JSONL per minute: sleeve shock/task/predicted rep (shock experiment)
   stocks: "data/stocks.txt", // stock manager status (portfolio value counts as money)
   stocksConfig: "data/stocks-config.txt", // stock control, written by the daemon
   bladeburner: "data/bladeburner.txt", // Bladeburner manager status
