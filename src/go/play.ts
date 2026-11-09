@@ -6,13 +6,15 @@ import { Board, key, parse } from "../lib/go/engine.js";
 import { PASS, search } from "../lib/go/mcts.js";
 import { readJson, writeJson } from "../lib/io.js";
 import { DATA } from "../lib/paths.js";
-import { armKey, chooseArm, DEFAULT_GO, record, type ArmStats, type GoConfig } from "../lib/plan/go.js";
+import { armKey, chooseArm, DEFAULT_GO, record, rotateArm, type ArmStats, type GoConfig, type Rotation } from "../lib/plan/go.js";
 
 interface GoState {
   arms: Record<string, ArmStats>;
   /** lastAugReset the arm stats belong to (bonuses reset on install) */
   resetMark: number;
   games: number;
+  /** rotation mode: current opponent's turn */
+  rot?: Rotation | null;
 }
 
 const ARMS_FILE = "data/go-arms.txt";
@@ -40,7 +42,13 @@ export async function main(ns: NS): Promise<void> {
     if (!inProgress) {
       const known = Object.keys(go.analysis.getStats()).filter((o) => !unavailable.has(o));
       const opponents = [...new Set([...known, ...Object.keys(cfg.weights)])].filter((o) => !unavailable.has(o) && o !== "No AI");
-      ({ opponent, size } = chooseArm(st.arms, opponents, cfg));
+      if (cfg.rotateMs > 0) {
+        const prev = st.rot?.opponent;
+        const r = rotateArm(st.arms, opponents, cfg, st.rot ?? null, Date.now());
+        ({ opponent, size } = r);
+        st.rot = r.rot;
+        if (prev !== opponent) ns.print(`rotation: ${opponent} for ${Math.round(cfg.rotateMs / 60_000)} min`);
+      } else ({ opponent, size } = chooseArm(st.arms, opponents, cfg));
       try {
         go.resetBoardState(opponent as GoOpponent, size as 5 | 7 | 9 | 13);
       } catch {
@@ -100,6 +108,7 @@ export async function main(ns: NS): Promise<void> {
       t: Date.now(),
       last: { opponent, size, won, score: `${end.blackScore}–${end.whiteScore}`, gainPct: gain, ms },
       games: st.games,
+      rotation: cfg.rotateMs > 0 ? { ...st.rot, endsIn: st.rot ? Math.max(0, st.rot.since + cfg.rotateMs - Date.now()) : 0 } : null,
       arms: st.arms,
       bonuses: Object.fromEntries(
         Object.entries(go.analysis.getStats()).map(([o, s]) => [o, { bonusPercent: s?.bonusPercent, wins: s?.wins, losses: s?.losses, winStreak: s?.winStreak }]),

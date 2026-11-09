@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Board, BLACK, WHITE, EMPTY, parse, toCols, key, legalMoves } from "../dist/lib/go/engine.js";
 import { search, PASS } from "../dist/lib/go/mcts.js";
-import { chooseArm, record, armKey, armValue, DEFAULT_GO } from "../dist/lib/plan/go.js";
+import { chooseArm, record, armKey, armValue, rotateArm, DEFAULT_GO } from "../dist/lib/plan/go.js";
 
 // boards are column strings like the game: cols[x][y]
 const at = (N, x, y) => x * N + y;
@@ -85,4 +85,34 @@ test("matchup picker: tries valuable untried arms first, then the best value per
   // Daedalus@7: 4×3 = 12/min beats Netburners: 0.1×5 = 0.5/min
   assert.deepEqual(chooseArm(arms, opps, cfg), { opponent: "Daedalus", size: 7 });
   assert.ok(armValue(arms[armKey("Daedalus", 7)], 4) > armValue(arms[armKey("Netburners", 7)], 0.1));
+});
+
+test("rotation: each opponent gets a turn of rotateMs, in weight order, wrapping around", () => {
+  const cfg = { ...DEFAULT_GO, weights: { Daedalus: 4, Illuminati: 2, Tetrads: 0.3 }, rotateMs: 15 * 60_000 };
+  const opps = ["Tetrads", "Illuminati", "Daedalus"];
+  const MIN = 60_000;
+  let r = rotateArm({}, opps, cfg, null, 0);
+  assert.equal(r.opponent, "Daedalus");
+  r = rotateArm({}, opps, cfg, r.rot, 14 * MIN);
+  assert.equal(r.opponent, "Daedalus"); // turn not over
+  r = rotateArm({}, opps, cfg, r.rot, 15 * MIN);
+  assert.deepEqual([r.opponent, r.rot.since], ["Illuminati", 15 * MIN]);
+  r = rotateArm({}, opps, cfg, r.rot, 30 * MIN);
+  assert.equal(r.opponent, "Tetrads");
+  r = rotateArm({}, opps, cfg, r.rot, 45 * MIN);
+  assert.equal(r.opponent, "Daedalus"); // wraps
+  // an opponent that became unavailable hands over to the next one in the same order
+  const gone = rotateArm({}, ["Daedalus", "Tetrads"], cfg, { opponent: "Illuminati", since: 0 }, 1);
+  assert.equal(gone.opponent, "Tetrads");
+});
+
+test("rotation picks the board size from that opponent's own arms", () => {
+  const cfg = { ...DEFAULT_GO, sizes: [5, 7], weights: { A: 1, B: 9 } };
+  const arms = {};
+  // untried sizes first, smallest first
+  assert.equal(rotateArm(arms, ["A"], cfg, null, 0).size, 5);
+  record(arms, armKey("A", 5), true, 0.01, 6000, "", 1);
+  assert.equal(rotateArm(arms, ["A"], cfg, null, 0).size, 7);
+  record(arms, armKey("A", 7), true, 0.2, 12000, "", 1); // 1.0/min vs 0.1/min
+  assert.equal(rotateArm(arms, ["A"], { ...cfg, explore: 0 }, null, 0).size, 7);
 });

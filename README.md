@@ -190,10 +190,12 @@ joined factions does not.
   with points. Thinking is sliced (`ns.sleep(0)`) so the UI stays responsive. Offline
   (`node tools/go-bench.mjs 7 6 300 5.5`) it beats a tactical bot every game at ~8.5k
   playouts/move on 7×7.
+- *Rotation* (default): every available opponent gets a 15-minute turn, in weight order
+  (Daedalus first), so every bonus grows instead of one. `data/go.txt` shows whose turn it is.
 - *Matchup picker*: tracks each (opponent, size) arm as an EMA of bonus-points gained per game
-  and minutes per game. It plays the arm with the best weighted bonus per minute, with UCB
-  exploration. That adapts to diminishing returns and to which opponents it actually beats.
-  Weights favor Daedalus (rep).
+  and minutes per game. In rotation it picks the board size for the current opponent; with
+  `"go": {"rotateMs": 0}` it picks the arm with the best weighted bonus per minute overall,
+  with UCB exploration (weights favor Daedalus, rep).
 
 **Casino** (`casino.ts`). The casino has no API, so this drives the blackjack UI through the DOM
 (25 GB while it runs). Loop: save → play a hand with basic strategy → on a loss, reload the
