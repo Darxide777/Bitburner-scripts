@@ -5,6 +5,7 @@
 import type { Multipliers, NS, Player, PlayerRequirement, ResetInfo, Server } from "@ns";
 import { callEach, call } from "../call.js";
 import { allHosts } from "../net.js";
+import { WORLD_DAEMON } from "../paths.js";
 import { NEURORECEPTOR, type AugInfo, type FactionData, type FactionInfo } from "./data.js";
 
 const PROGRAM_FILES = ["BruteSSH.exe", "FTPCrack.exe", "relaySMTP.exe", "HTTPWorm.exe", "SQLInject.exe", "Formulas.exe"];
@@ -130,18 +131,20 @@ export async function collectFactionData(ns: NS): Promise<FactionData> {
     augs[a] = { ...st, price: prices.get(a) ?? Infinity, repReq: repReqs.get(a) ?? Infinity };
   }
 
-  // ---- servers (backdoors, w0r1dd43m0n) ----
-  const hosts = allHosts(ns).filter((h) => h !== "home");
+  // ---- servers (backdoors, w0r1d_d43m0n) ----
+  const scanned = allHosts(ns).filter((h) => h !== "home");
+  const inScan = scanned.includes(WORLD_DAEMON);
+  const hosts = inScan ? scanned : [...scanned, WORLD_DAEMON]; // by name: see WORLD_DAEMON
   const servers = await each<Server>(ns, "getServer", hosts);
   const backdoors: Record<string, boolean> = {};
   const backdoorable: string[] = [];
-  let worldDaemon = { exists: false, rooted: false, reqHack: 0 };
+  let worldDaemon = { exists: false, inScan, rooted: false, reqHack: 0 };
   for (const h of hosts) {
     const s = servers.get(h);
     if (!s || s.purchasedByPlayer) continue;
     backdoors[h] = !!s.backdoorInstalled;
-    if (h === "w0r1dd43m0n") {
-      worldDaemon = { exists: true, rooted: s.hasAdminRights, reqHack: s.requiredHackingSkill ?? 0 };
+    if (h === WORLD_DAEMON) {
+      worldDaemon = { exists: true, inScan, rooted: s.hasAdminRights, reqHack: s.requiredHackingSkill ?? 0 };
       continue;
     }
     if (s.hasAdminRights && !s.backdoorInstalled && (s.requiredHackingSkill ?? 0) <= p.skills.hacking) backdoorable.push(h);

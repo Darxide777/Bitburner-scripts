@@ -45,7 +45,7 @@ daemon.js                 orchestrator: telemetry → metrics → planner module
 │   ├─ factions-act.js    join / travel / work / crime / buy The Red Pill
 │   ├─ backdoor.js        connect along the path and install a backdoor (spawned, not awaited)
 │   ├─ install.js         buy planned augs → home RAM → NeuroFlux → install, restart daemon
-│   └─ destroy.js         destroy w0r1dd43m0n → next BN12
+│   └─ destroy.js         destroy w0r1d_d43m0n → next BN12
 ├─ tmp/call/*.js          generated one-function proxies (see lib/call.ts)
 ├─ hack/manager.js        long-running HWGW batcher across every rooted server's RAM
 │   └─ hack/w/{h,g,w,s}.js  minimal workers (hack/grow/weaken/share)
@@ -88,7 +88,7 @@ collects faction/aug state and the planner decides:
   money goes to home RAM, then NeuroFlux levels.
 - *infra spend*: the economy module's budget tapers from 50% to 5% as install approaches,
   because cloud servers are wiped on install.
-- *destroy*: with The Red Pill installed and the hack level reached, destroy w0r1dd43m0n
+- *destroy*: with The Red Pill installed and the hack level reached, destroy w0r1d_d43m0n
   and start the next BN12.
 
 **Gang** (`lib/plan/gang.ts` decides, `gang/manager.ts` acts). At -54k karma the daemon creates
@@ -181,13 +181,13 @@ faction-working.
 - [x] Rooting, HWGW batch manager, faction `share()`
 - [x] Economy: TOR/programs, home RAM/cores, cloud servers
 - [x] Factions & augments: invites with city conflicts, travel, backdoors, rep-grind choice,
-      escalation-aware purchase order, donations, NeuroFlux, install timing, w0r1dd43m0n
+      escalation-aware purchase order, donations, NeuroFlux, install timing, w0r1d_d43m0n
 - [ ] Learn install timing from `runs.txt` history instead of fixed `installPatience`
 - [x] Casino: blackjack save-scumming for $10b per install
 - [x] Stanek's Gift: acceptance, layout solver, per-install charging
 - [x] IPvGO: rules engine, MCTS player, self-optimizing matchup choice
 - [ ] Company work → megacorp factions (ECorp, MegaCorp, KuaiGong, NWO, …)
-- [ ] Hacking-XP mode when the hack level gates the next faction or w0r1dd43m0n
+- [ ] Hacking-XP mode when the hack level gates the next faction or w0r1d_d43m0n
 - [ ] Move the remaining recurring tasks onto the call proxy to shrink the home reserve
 - [x] Sleeves: karma for the gang, then one per grind faction; shock recovery; sleeve augs
 - [x] Gang: creation, recruit, equipment, training, respect/money mode, wanted control,
@@ -197,4 +197,4 @@ faction-working.
 - [ ] Bladeburner (alternate win condition + rep)
 - [ ] Corporation, coding contracts, stock market
 - [ ] IPvGO cheats (SF14 `ns.go.cheat`) where the success chance is worth the risk
-- [ ] Endgame: Daedalus → The Red Pill → w0r1dd43m0n, then auto-continue into the next BN12 level
+- [ ] Endgame: Daedalus → The Red Pill → w0r1d_d43m0n, then auto-continue into the next BN12 level

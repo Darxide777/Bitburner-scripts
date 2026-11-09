@@ -1,6 +1,7 @@
 // Network discovery and rooting. Uses only cheap functions (scan, nuke, the
 // port openers, fileExists, hasRootAccess, getServerNumPortsRequired).
 import type { NS } from "@ns";
+import { WORLD_DAEMON } from "./paths.js";
 
 /** Every host reachable from home (BFS), home first. */
 export function allHosts(ns: NS): string[] {
@@ -55,14 +56,17 @@ function openers(ns: NS): ((h: string) => boolean)[] {
 export function rootAll(ns: NS, hosts = allHosts(ns)): string[] {
   const tools = openers(ns);
   const fresh: string[] = [];
-  for (const h of hosts) {
-    if (ns.hasRootAccess(h)) continue;
-    if (ns.getServerNumPortsRequired(h) > tools.length) continue;
-    for (const open of tools) open(h);
+  // port openers and nuke work by hostname, so w0r1d_d43m0n is tried even when no scan
+  // reaches it; it throws "invalid hostname" while it doesn't exist yet
+  const all = hosts.includes(WORLD_DAEMON) ? hosts : [...hosts, WORLD_DAEMON];
+  for (const h of all) {
     try {
+      if (ns.hasRootAccess(h)) continue;
+      if (ns.getServerNumPortsRequired(h) > tools.length) continue;
+      for (const open of tools) open(h);
       if (ns.nuke(h)) fresh.push(h);
     } catch {
-      /* not enough ports after all */
+      /* not enough ports after all, or no such host */
     }
   }
   return fresh;

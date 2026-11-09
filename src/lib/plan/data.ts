@@ -52,8 +52,9 @@ export interface FactionData {
   augs: Record<string, AugInfo>;
   /** company -> job title */
   jobs: Record<string, string>;
-  /** w0r1dd43m0n status (only present after The Red Pill is installed). */
-  worldDaemon: { exists: boolean; rooted: boolean; reqHack: number };
+  /** w0r1d_d43m0n status (only present after The Red Pill is installed). */
+  /** inScan: reachable by scan() from home (newer versions may not link it in) */
+  worldDaemon: { exists: boolean; inScan?: boolean; rooted: boolean; reqHack: number };
 }
 
 export const NFG = "NeuroFlux Governor";

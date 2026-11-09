@@ -6,7 +6,7 @@
 //   backdoor  which servers to backdoor for faction invites
 //   work      which faction + work type gives the most aug value per second of rep grind
 //   install   whether to buy everything now and install, and in what order
-//   destroy   whether w0r1dd43m0n can be destroyed
+//   destroy   whether w0r1d_d43m0n can be destroyed
 //
 // Money is NOT spent on augs during a run: every purchase multiplies the price of
 // all remaining augs by ~1.9, so buying everything at install time, most
@@ -106,8 +106,8 @@ export interface Plan {
   buyNow: [string, string][];
   install: null | { reason: string; buy: [string, string][]; donate: [string, number][] };
   destroy: boolean;
-  /** Why destroy is (not) happening: Red Pill installed, w0r1dd43m0n seen/rooted, hack level vs req. */
-  worldDaemon: { redPill: boolean; exists: boolean; rooted: boolean; reqHack: number; hackLevel: number };
+  /** Why destroy is (not) happening: Red Pill installed, w0r1d_d43m0n seen/rooted, hack level vs req. */
+  worldDaemon: { redPill: boolean; exists: boolean; inScan?: boolean; rooted: boolean; reqHack: number; hackLevel: number };
   /** Fraction of money the economy module may spend on servers/RAM. */
   infraSpend: number;
   /** Augs that could be bought right now if we installed (purchase order). */

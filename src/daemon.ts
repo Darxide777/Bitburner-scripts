@@ -295,7 +295,7 @@ async function factionsModule(
   const p = makePlan({ data, observedRep: r.rep, income: r.income, sinceInstall: m.sinceInstall }, cfg);
 
   if (p.destroy) {
-    event("destroy", "w0r1dd43m0n is ready — destroying the BitNode");
+    event("destroy", "w0r1d_d43m0n is ready — destroying the BitNode");
     freeHome(ns);
     spawnTask(ns, "tasks/destroy.js", [cfg.nextNode]);
     return p;
@@ -323,7 +323,7 @@ async function factionsModule(
 
   // Stanek before anything can buy an aug: the gift can only be accepted with no augs
   try {
-    stanekStatus = await manageStanek(ns, data, s.homeCores, { ...DEFAULT_STANEK, ...dcfg.stanek }, event);
+    stanekStatus = await manageStanek(ns, data, s.homeCores, { ...DEFAULT_STANEK, ...dcfg.stanek }, event, homeReserve(ns));
   } catch (e) {
     event("error", `stanek failed: ${e instanceof Error ? e.message : String(e)}`);
   }

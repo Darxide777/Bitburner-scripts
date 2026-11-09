@@ -124,7 +124,7 @@ test("never works for or plans around Shadows of Anarchy", () => {
   assert.ok(!p.ready.some((c) => c.aug === "SoA"));
 });
 
-test("destroys w0r1dd43m0n when ready", () => {
+test("destroys w0r1d_d43m0n when ready", () => {
   const w = world({ installed: ["The Red Pill"], hackLevel: 5000, worldDaemon: { exists: true, rooted: true, reqHack: 3000 } });
   assert.equal(plan(input(w)).destroy, true);
 });

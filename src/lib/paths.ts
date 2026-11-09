@@ -32,6 +32,13 @@ export const SCRIPTS = {
 /** Hash of the current build, written by tools/sync.mjs; daemon.js restarts when it changes. */
 export const BUILD_MARKER = "build.txt";
 
+/**
+ * The BitNode's final server (note the underscore). It only joins the network once
+ * The Red Pill is installed; rooting/collection also address it by name in case no
+ * scan() path reaches it.
+ */
+export const WORLD_DAEMON = "w0r1d_d43m0n";
+
 export const TASK_DIR = "tmp/task";
 
 /** Karma needed to create a gang outside BitNode 2. */

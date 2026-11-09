@@ -89,6 +89,8 @@ export async function manageStanek(
   homeCores: number,
   cfg: StanekConfig,
   event: (k: string, m: string, d?: unknown) => void,
+  /** home RAM the daemon's own tasks need; the charger never takes it (small homes early in a node) */
+  keepFreeGB = 0,
 ): Promise<StanekStatus> {
   const status: StanekStatus = {
     state: "accepted",
@@ -173,14 +175,14 @@ export async function manageStanek(
   const ramPer = ns.getScriptRam(CHARGER, "home");
   if (ramPer <= 0 || stats.length === 0) return status;
   const homeMax = ns.getServerMaxRam("home");
-  const desired = Math.floor((homeMax * cfg.ramShare) / ramPer);
+  const desired = Math.floor(Math.min(homeMax * cfg.ramShare, homeMax - keepFreeGB) / ramPer);
   const effTarget = desired * coreBonus(homeCores);
   const todo = stats.filter((f) => f.highestCharge < effTarget * 0.5 || f.numCharge < cfg.rounds);
   if (!todo.length || desired < 1) {
     cache.waitingSince = 0;
     return status;
   }
-  const free = homeMax - ns.getServerUsedRam("home");
+  const free = homeMax - ns.getServerUsedRam("home") - keepFreeGB;
   const fit = Math.floor(free / ramPer);
   cache.waitingSince ||= Date.now();
   const waited = Date.now() - cache.waitingSince;
