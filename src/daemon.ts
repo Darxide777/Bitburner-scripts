@@ -404,6 +404,7 @@ async function factionsModule(
       income: r.income,
       sinceInstall: m.sinceInstall,
       currentWork: work?.factionName ?? null,
+      ratesReady: m.long.window >= 120_000,
       bladeburner: {
         inDivision: bbInDivision || readJson<Partial<BladeburnerStatus>>(ns, DATA.bladeburner, {}).inDivision === true,
         simulacrum: data.installed.includes(SIMULACRUM),

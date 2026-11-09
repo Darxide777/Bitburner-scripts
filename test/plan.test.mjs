@@ -244,3 +244,17 @@ test("Church of the Machine God: no donations (it offers no work); its augs get 
   assert.ok(c.value > c0.value + 2.9, `${c.value} vs ${c0.value}`);
   assert.ok((p.repGated["Church of the Machine God"] ?? 0) > 0, "rep-gated → the daemon adds chargers");
 });
+
+test("no ETA-based install before observed rates exist (right after a daemon restart)", () => {
+  const w = world({ money: 1e15, installed: ["HackA", "RepB"] }); // nothing grindable left
+  // a valuable aug whose rep only has an observed rate (no work types), plus enough ready augs
+  w.factions.Church = fac({ joined: true, augs: ["Awake"] });
+  w.augs.Awake = aug({ repReq: 1e9, factions: ["Church"], stats: { hacking: 1.5 } });
+  for (let i = 0; i < 6; i++) {
+    w.augs[`R${i}`] = aug({ repReq: 1, price: 1e3, factions: ["CyberSec"], stats: { hacking: 1.01 } });
+    w.factions.CyberSec.augs.push(`R${i}`);
+  }
+  const later = { sinceInstall: 3 * 3600_000 - 1 };
+  assert.ok(plan(input(w, later)).install, "with rates: next aug ∞ away → install");
+  assert.equal(plan(input(w, { ...later, ratesReady: false })).install, null, "no rates yet → wait");
+});

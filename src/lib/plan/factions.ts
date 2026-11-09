@@ -153,6 +153,12 @@ export interface PlanInput {
   sinceInstall: number; // ms
   /** Faction the player is working for right now, if any (keeps the NeuroFlux grind from hopping). */
   currentWork?: string | null;
+  /**
+   * false right after a daemon (re)start: observed rates are still empty, so rep that only
+   * has an observed rate (Church, gang factions…) would look infinitely far away. ETA-based
+   * installs wait for this (default true).
+   */
+  ratesReady?: boolean;
   /** Bladeburner manager state: in the division, and whether actions can run alongside work. */
   bladeburner?: { inDivision: boolean; simulacrum: boolean; canJoin?: boolean };
 }
@@ -401,7 +407,7 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     );
     if (since >= cfg.maxRunMs) reason = `run exceeded ${fmtS(cfg.maxRunMs / 1000)}`;
     else if (!valuablePending.length) reason = "nothing valuable left to wait for";
-    else if (newAugs >= cfg.minAugsToInstall && nextEta > cfg.installPatience * since)
+    else if (input.ratesReady !== false && newAugs >= cfg.minAugsToInstall && nextEta > cfg.installPatience * since)
       reason = `next aug in ${fmtS(nextEta / 1000)} > ${cfg.installPatience}× run time (${fmtS(since / 1000)})`;
     else if (favorUnlock) reason = `installing unlocks donations at ${favorUnlock}`;
   }
