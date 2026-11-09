@@ -1,7 +1,7 @@
 // Hacknet decision tests (run against the compiled output: `npm test`).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { valueOptions, decideSpend, chooseUpgrade, expectedRunMs, SELL, MAX_MONEY, MIN_SEC, BB_RANK, CONTRACT, DEFAULT_HACKNET } from "../dist/lib/plan/hacknet.js";
+import { valueOptions, decideSpend, chooseUpgrade, expectedRunMs, SELL, MAX_MONEY, MIN_SEC, BB_RANK, CONTRACT, CORP_FUNDS, DEFAULT_HACKNET } from "../dist/lib/plan/hacknet.js";
 
 const costs = { [SELL]: 4, [MAX_MONEY]: 50, [MIN_SEC]: 50, [BB_RANK]: 250, [CONTRACT]: 200 };
 const base = (o = {}) => ({ remainingSec: 1800, incomePerSec: 1e7, targets: [], costs, ...o });
@@ -73,4 +73,18 @@ test("doesn't save for an option it can't reach before the run ends", () => {
   assert.equal(decideSpend(o, 10, 1000, 0.001, 1800).kind, "sell", "250 hashes at 0.001/s = 69 h");
   assert.equal(decideSpend(o, 10, 1000, 1, 1800).kind, "save", "240 s away");
   assert.equal(decideSpend(o, 300, 1000, 0, 0).kind, "buy", "already affordable");
+});
+
+test("corp funds: valued by the dividends you actually get; today's corp loses to selling", () => {
+  const c = { ...costs, [CORP_FUNDS]: 100 };
+  // measured today: $0.8m/s profit, $40.9b valuation, ~$514/s reaching the player, tribute 0.5
+  const today = valueOptions(base({ costs: c, corp: { profitPerSec: 8e5, valuation: 4.09e10, realizedPerSec: 514, tribute: 0.5 } }));
+  const cf = today.find((x) => x.name === CORP_FUNDS);
+  assert.ok(cf.perHash < 250_000, `corp funds ${cf.perHash}/hash should lose to selling`);
+  assert.equal(today[0].name, SELL);
+  // a corp that converts profit to dividends well would win
+  const good = valueOptions(base({ costs: c, corp: { profitPerSec: 1e9, valuation: 1e12, realizedPerSec: 5e8, tribute: 0 } }));
+  assert.equal(good[0].name, CORP_FUNDS);
+  // unprofitable or paying nothing: not an option
+  assert.equal(valueOptions(base({ costs: c, corp: { profitPerSec: -1, valuation: 1e12, realizedPerSec: 0, tribute: 0 } })).find((x) => x.name === CORP_FUNDS), undefined);
 });

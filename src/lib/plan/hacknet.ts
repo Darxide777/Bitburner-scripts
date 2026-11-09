@@ -20,6 +20,7 @@ export const MAX_MONEY = "Increase Maximum Money";
 export const MIN_SEC = "Reduce Minimum Security";
 export const BB_RANK = "Exchange for Bladeburner Rank";
 export const CONTRACT = "Generate Coding Contract";
+export const CORP_FUNDS = "Sell for Corporation Funds";
 
 export interface HacknetConfig {
   /** max share of cash per production purchase */
@@ -30,6 +31,10 @@ export interface HacknetConfig {
   rankSecondValue: number;
   /** don't value anything over less than this (s) */
   minRemainingSec: number;
+  /** horizon for corp funds (a corp lasts the whole BitNode), s */
+  corpHorizonSec: number;
+  /** new corp money earns less than the corp's average dollar */
+  corpMarginalFactor: number;
 }
 
 export const DEFAULT_HACKNET: HacknetConfig = {
@@ -37,6 +42,8 @@ export const DEFAULT_HACKNET: HacknetConfig = {
   paybackFrac: 0.5,
   rankSecondValue: 1,
   minRemainingSec: 600,
+  corpHorizonSec: 12 * 3600,
+  corpMarginalFactor: 0.5,
 };
 
 export interface TargetInfo {
@@ -58,6 +65,8 @@ export interface ValueInput {
   minSecMult?: number;
   bladeburner?: { rank: number; rankPerSec: number; finalRank: number; active: boolean } | null;
   contractRewards?: number[];
+  /** corp economics, measured: profit/s, valuation, and the dividends you actually receive per s */
+  corp?: { profitPerSec: number; valuation: number; realizedPerSec: number; tribute: number } | null;
 }
 
 export interface HashOption {
@@ -98,6 +107,16 @@ export function valueOptions(v: ValueInput, cfg: HacknetConfig = DEFAULT_HACKNET
     const gained = Math.min(100, Math.max(0, bb.finalRank - bb.rank));
     const saved = gained / bb.rankPerSec;
     add(BB_RANK, saved * v.incomePerSec * cfg.rankSecondValue, `+${gained} rank = ${Math.round(saved / 60)}m of Bladeburner`);
+  }
+
+  // corp funds ($1b per purchase) reach you only as dividends, which are taxed
+  // (x^(1 − tribute)): value = $1b × the corp's return (profit / valuation) × your measured
+  // dividends per $ of profit × (1 − tribute) for the margin × the horizon × a marginal discount
+  const c = v.corp;
+  if (c && c.profitPerSec > 0 && c.valuation > 0 && c.realizedPerSec > 0) {
+    const perProfit = (c.realizedPerSec / c.profitPerSec) * (1 - c.tribute);
+    const value = 1e9 * (c.profitPerSec / c.valuation) * perProfit * cfg.corpHorizonSec * cfg.corpMarginalFactor;
+    add(CORP_FUNDS, value, `$1b corp → ~$${short(value)} dividends over ${Math.round(cfg.corpHorizonSec / 3600)}h`);
   }
 
   const r = v.contractRewards ?? [];

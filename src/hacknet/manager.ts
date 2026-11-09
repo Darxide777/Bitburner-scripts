@@ -9,6 +9,7 @@ import {
   BB_RANK,
   chooseUpgrade,
   CONTRACT,
+  CORP_FUNDS,
   decideSpend,
   reachable,
   DEFAULT_HACKNET,
@@ -43,7 +44,7 @@ export interface HacknetStatus {
   note: string;
 }
 
-const NAMES = [SELL, MAX_MONEY, MIN_SEC, BB_RANK, CONTRACT] as HacknetServerHashUpgrade[];
+const NAMES = [SELL, MAX_MONEY, MIN_SEC, BB_RANK, CONTRACT, CORP_FUNDS] as HacknetServerHashUpgrade[];
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -81,7 +82,8 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // ---- data the valuation needs ----
-    const st = readJson<{ metrics?: { long?: { income?: number }; sinceInstall?: number } }>(ns, DATA.status, {});
+    const st = readJson<{ metrics?: { long?: { income?: number; bySource?: Record<string, number> }; sinceInstall?: number } }>(ns, DATA.status, {});
+    const corp = readJson<{ t?: number; exists?: boolean; revenue?: number; expenses?: number; valuation?: number; tribute?: number }>(ns, DATA.corp, {});
     const since = (st.metrics?.sinceInstall ?? 0) / 1000;
     const runs = ns
       .read(DATA.runs)
@@ -115,6 +117,15 @@ export async function main(ns: NS): Promise<void> {
             ? { rank: bb.rank ?? 0, rankPerSec: bb.rankPerSec ?? 0, finalRank: bb.finalRank ?? 0, active: true }
             : null,
         contractRewards: contracts.moneyRewards,
+        corp:
+          corp.exists && corp.t && Date.now() - corp.t < 120_000
+            ? {
+                profitPerSec: (corp.revenue ?? 0) - (corp.expenses ?? 0),
+                valuation: corp.valuation ?? 0,
+                realizedPerSec: st.metrics?.long?.bySource?.corporation ?? 0,
+                tribute: corp.tribute ?? 0,
+              }
+            : null,
       },
       cfg,
     );

@@ -20,6 +20,11 @@ export interface CorpConfig {
   /** offer counts as plateaued when its growth over `plateauCycles` is below this */
   plateauGrowth: number;
   plateauCycles: number;
+  /**
+   * and only after this many profitable cycles in a row: right after creation the offer is
+   * flat because nothing produces yet (round 1 was once taken at $7b, 10 s in)
+   */
+  minProfitCycles: number;
   /** dividend rate once public while the corp still has growth to buy… */
   dividendRate: number;
   /** …and once it's saturated (no affordable growth purchase for `saturatedCycles` cycles) */
@@ -47,7 +52,8 @@ export const DEFAULT_CORP: CorpConfig = {
   jobs: { Operations: 0.25, Engineer: 0.25, Business: 0.15, Management: 0.2, "Research & Development": 0.15 },
   maxRound: 2,
   plateauGrowth: 0.01,
-  plateauCycles: 5,
+  plateauCycles: 30,
+  minProfitCycles: 20,
   dividendRate: 0.1,
   maxDividendRate: 0.5,
   saturatedCycles: 20,

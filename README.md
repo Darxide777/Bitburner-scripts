@@ -196,7 +196,9 @@ job split, tea and parties above 95% energy/morale → boost materials (Hardware
 Cores, Real Estate) in the optimal mix for `boostFrac` (50%) of each warehouse — the closed-form
 maximum of Π(1 + 0.002·qᵢ)^fᵢ for the space → research (Hi-Tech R&D Lab, Market-TA.I/II, AutoBrew,
 AutoPartyManager…) → the cheapest of warehouse/office/corp upgrades/AdVert within 20% of funds →
-investment rounds 1–2, each accepted once its offer has stopped growing (<1% over 5 cycles) →
+investment rounds 1–2, each accepted once the corp has been profitable for 20 cycles in a row and
+its offer has then stopped growing (<1% over 30 cycles; a 5-cycle window once took round 1 at
+$7b ten seconds in, while nothing was producing yet) →
 then go public selling no shares and pay dividends.
 
 Phase 2, once Agriculture is in all six cities and funds reach 2× Tobacco's starting cost: a
@@ -216,7 +218,10 @@ bribes, with ≤10% of funds per cycle, for the planner's current rep gap.
 upgrade is priced in money-equivalent $ per hash from measured data: Sell for Money ($1m / 4
 hashes, the floor); Increase Maximum Money and Reduce Minimum Security on each hacking target
 (its $/s from `data/hack.txt` × the gain × the expected rest of the run, the median of recent run
-lengths); Bladeburner Rank (seconds of progress saved at the measured rank/s, capped at what's
+lengths); Sell for Corporation Funds ($1b to the corp, worth to you the corp's return —
+profit ÷ valuation — × the dividends you actually receive per $ of profit × (1 − tribute) for the
+margin, since dividends are paid as x^(1 − tribute), over 12 h, halved for diminishing returns);
+Bladeburner Rank (seconds of progress saved at the measured rank/s, capped at what's
 left to Operation Daedalus, × income/s); Generate Coding Contract (average measured money
 reward). It buys the best one, saves for it when it beats selling and fits the cache, else
 sells; it measures each purchase's real effect and uses that instead of the 2% default.

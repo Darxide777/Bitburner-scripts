@@ -61,6 +61,9 @@ export interface CorpStatus {
   products: { name: string; progress: number; rating: number }[];
   /** cycles since the last growth purchase (drives dividends and bribes) */
   cyclesWithoutGrowth: number;
+  /** your share of the corp, and the dividend tax exponent (dividends = x^(1 − tribute)) */
+  ownership: number;
+  tribute: number;
   bribed: number;
   last: string[];
   note: string;
@@ -103,6 +106,9 @@ const TOB: DivDef = {
 const PRODUCT_PREFIX = "Tob-";
 
 interface CorpInfo {
+  numShares: number;
+  totalShares: number;
+  tributeModifier: number;
   funds: number;
   revenue: number;
   expenses: number;
@@ -153,6 +159,8 @@ export async function main(ns: NS): Promise<void> {
   const boostMats = new Map<string, { name: string; factor: number; size: number }[]>();
   let cyclesWithoutGrowth = 0;
   let bribed = 0;
+  /** consecutive cycles with revenue > expenses (investment rounds wait for a run of them) */
+  let profitCycles = 0;
 
   while (true) {
     const ctl = readJson<CorpControl>(ns, DATA.corpConfig, { allowCreate: false });
@@ -179,6 +187,8 @@ export async function main(ns: NS): Promise<void> {
       employees: 0,
       products: [],
       cyclesWithoutGrowth,
+      ownership: 0,
+      tribute: 0,
       bribed,
       last: [],
       note: "",
@@ -300,12 +310,14 @@ export async function main(ns: NS): Promise<void> {
       status.cyclesWithoutGrowth = cyclesWithoutGrowth;
 
       // ---- investors, then public + dividends (rate from whether growth is still affordable) ----
+      profitCycles = corp.revenue > corp.expenses ? profitCycles + 1 : 0;
       if (!corp.public) {
         const offer = await cc<{ funds: number; round: number }>("getInvestmentOffer");
         status.round = offer?.round ?? 0;
         status.offer = offer?.funds ?? 0;
         if (offer && offer.round <= cfg.maxRound) {
-          const h = [...(offers.get(offer.round) ?? []), offer.funds].slice(-50);
+          // the offer only counts while the corp has been profitable for a while
+          const h = profitCycles >= cfg.minProfitCycles ? [...(offers.get(offer.round) ?? []), offer.funds].slice(-100) : [];
           offers.set(offer.round, h);
           if (offerPlateaued(h, cfg) && (await cc<boolean>("acceptInvestmentOffer"))) {
             did(`accepted investment round ${offer.round}: $${ns.format.number(offer.funds)}`);
@@ -343,6 +355,8 @@ export async function main(ns: NS): Promise<void> {
         valuation: corp.valuation,
         public: corp.public,
         dividendRate: corp.dividendRate,
+        ownership: corp.totalShares > 0 ? corp.numShares / corp.totalShares : 0,
+        tribute: corp.tributeModifier ?? 0,
       });
 
       // ---------- helpers (closures over corp/cfg/status) ----------
