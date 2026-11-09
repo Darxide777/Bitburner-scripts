@@ -14,7 +14,6 @@ import { allHosts } from "./net.js";
 import {
   BOOSTER,
   cells,
-  coreBonus,
   DEFAULT_STANEK_WEIGHTS,
   fragmentEffect,
   neighbors,
@@ -198,7 +197,9 @@ export async function manageStanek(
   const homeMax = ns.getServerMaxRam("home");
   const hosts = allHosts(ns);
   const blocks = [
-    { host: "home", gb: Math.min(homeMax * cfg.ramShare, homeMax - keepFreeGB), mult: coreBonus(homeCores) },
+    // highestCharge is the raw thread count: home's cores don't count (observed: 512 threads
+    // on 6 cores → highestCharge 512), so blocks compare by threads alone
+    { host: "home", gb: Math.min(homeMax * cfg.ramShare, homeMax - keepFreeGB), mult: 1 },
     ...hosts.filter((h) => h.startsWith("cloud-")).map((h) => ({ host: h, gb: ns.getServerMaxRam(h), mult: 1 })),
   ]
     .map((b) => ({ ...b, threads: Math.floor(b.gb / ramPer) }))

@@ -171,7 +171,7 @@ product of the powers of every booster touching it. Consequences:
   Rep, then Hacking, Hacking Speed and Hacking Money. Installs keep the layout but wipe charges,
   so a better layout is only applied when the board is empty or uncharged.
 - **Charging** has two modes, one process at a time, on the server with the most effective
-  threads: home's `ramShare` (50%) with its core bonus, or a whole cloud server.
+  threads: home's `ramShare` (50%) or a whole cloud server (cores don't count toward highestCharge).
   - *Peak*: `rounds` (5) calls per fragment, ~25 s, whenever the biggest block is ≥2× the
     fragments' highestCharge (install, home upgrades, bigger cloud servers).
   - *Continuous* (otherwise): charges forever on the biggest block that's ≤ `maxPoolShare` (25%)

@@ -1,7 +1,7 @@
 // Stanek charger: charges each given fragment `rounds` times with this script's threads.
 // args: rounds (0 = forever), JSON [[x, y], ...]
-// A fragment's highestCharge is the most threads (× core bonus) used in ONE call, so this
-// runs as a single big process (on home for the core bonus). Each call takes 1 s.
+// A fragment's highestCharge is the most threads used in ONE call (cores don't count), so
+// this runs as a single big process on the biggest block. Each call takes 1 s.
 import type { NS } from "@ns";
 
 export async function main(ns: NS): Promise<void> {
