@@ -40,3 +40,15 @@ export function appendJsonl(ns: NS, file: string, value: unknown, maxLines = 500
     ns.write(file, kept.join("\n") + "\n", "w");
   }
 }
+
+/**
+ * Append one plain-text line (trace files), keeping at most `maxLines`. In-game files live in
+ * the save; the sync tool archives every line locally (logs/archive/), so these stay small.
+ */
+export function appendLine(ns: NS, file: string, line: string, maxLines = 500): void {
+  ns.write(file, line.endsWith("\n") ? line : line + "\n", "a");
+  const raw = ns.read(file);
+  let lines = 0;
+  for (let i = 0; i < raw.length; i++) if (raw.charCodeAt(i) === 10) lines++;
+  if (lines > maxLines * 1.1) ns.write(file, raw.split("\n").filter(Boolean).slice(-maxLines).join("\n") + "\n", "w");
+}

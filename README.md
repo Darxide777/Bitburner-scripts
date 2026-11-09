@@ -26,7 +26,11 @@ run daemon.js
 While connected, the sync server also:
 
 - refreshes `types/NetscriptDefinitions.d.ts` from the running game, so the types match your game version
-- pulls telemetry (`data/*.txt` on home) into `./logs/` every minute for offline analysis
+- pulls telemetry (`data/*.txt` on home) into `./logs/` every minute for offline analysis, and
+  appends the new lines of every history log to `./logs/archive/<name>.jsonl`. In-game files
+  live in the save (the casino saves before every hand), so they're capped to about a day
+  (metrics/sleeves 1500 lines, grafting 200, company 300, traces 500); the archive on disk
+  keeps everything, a few MB a day. The analysis tools read the archive when it exists.
 - writes a build hash to `build.txt` on home once a build has settled; `daemon.js` notices the
   change and restarts itself and the hack/gang/Go managers on the new code (`tasks/restart.js`)
 

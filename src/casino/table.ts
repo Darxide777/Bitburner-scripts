@@ -13,6 +13,7 @@
 // Counters live in localStorage because in-game files roll back with every reload.
 import type { NS } from "@ns";
 import { DATA } from "../lib/paths.js";
+import { appendLine } from "../lib/io.js";
 
 const CAP = 10e9;
 const MAX_BET = 100e6;
@@ -42,7 +43,7 @@ export async function main(ns: NS): Promise<void> {
   const say = (msg: string) => {
     ns.print(msg);
     ns.tprint(`casino: ${msg}`);
-    ns.write("data/casino-trace.txt", `${new Date().toISOString()} table ${msg}\n`, "a");
+    appendLine(ns, "data/casino-trace.txt", `${new Date().toISOString()} table ${msg}`);
   };
   say("table script running");
   const doc = document;

@@ -8,7 +8,9 @@
 //   3. refreshes types/NetscriptDefinitions.d.ts from the running game, so the
 //      types always match the game version you actually play
 //   4. every PULL_INTERVAL ms, pulls the automation's telemetry files (data/*.txt
-//      on home) back into ./logs/ so they can be analyzed outside the game
+//      on home) back into ./logs/ so they can be analyzed outside the game, and appends
+//      the new lines of the history logs to ./logs/archive/<name>.jsonl — the in-game
+//      copies are capped small (they live in the save file), the archive keeps everything
 //
 // Protocol: JSON-RPC 2.0 over WebSocket (methods pushFile, getFile, deleteFile,
 // getFileNames, getDefinitionFile, ...), as implemented in the game's
@@ -19,6 +21,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSy
 import { dirname, join, relative, sep } from "node:path";
 import { createHash } from "node:crypto";
 import { exportAll } from "./fix-defs.mjs";
+import { makeArchive } from "./archive.mjs";
 
 const args = process.argv.slice(2);
 const PORT = Number(argValue("--port") ?? process.env.BB_PORT ?? 12525);
@@ -181,17 +184,25 @@ async function refreshDefinitions() {
   }
 }
 
+// ---------- archive: full history on disk (tools/archive.mjs) ----------
+/** history logs (line-per-record); status files are overwritten and aren't archived */
+const ARCHIVED = ["metrics", "events", "runs", "sleeves", "grafting", "company", "milestones", "nodes", "casino-trace", "infiltration-trace"];
+const archive = makeArchive(join(LOGS, "archive"));
+
 async function pullLogs() {
   try {
     const names = await rpc("getFileNames", { server: "home" });
     const wanted = names.map((n) => n.replace(/^\//, "")).filter((n) => n.startsWith("data/") && n.endsWith(".txt"));
+    let archived = 0;
     for (const filename of wanted) {
       const content = await rpc("getFile", { server: "home", filename });
       const dest = join(LOGS, filename.slice("data/".length));
       mkdirSync(dirname(dest), { recursive: true });
       writeFileSync(dest, content);
+      const name = filename.slice("data/".length).replace(/\.txt$/, "");
+      if (ARCHIVED.includes(name)) archived += archive(name, content);
     }
-    if (wanted.length) log(`pulled ${wanted.length} telemetry file(s) into ${LOGS}/`);
+    if (wanted.length) log(`pulled ${wanted.length} telemetry file(s) into ${LOGS}/ (+${archived} archived lines)`);
   } catch (e) {
     log("log pull failed:", e.message);
   }

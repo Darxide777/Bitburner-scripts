@@ -8,10 +8,12 @@
 import { existsSync, readFileSync } from "node:fs";
 
 const jsonl = (f) => (existsSync(f) ? readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []);
+// the archive keeps everything; fall back to the in-game copies
+const pick = (name) => (existsSync(`logs/archive/${name}.jsonl`) ? `logs/archive/${name}.jsonl` : `logs/${name}.txt`);
 const h = (ms) => (ms == null ? "?" : ms < 3600e3 ? `${(ms / 60e3).toFixed(0)}m` : `${(ms / 3600e3).toFixed(1)}h`);
 
-const nodes = jsonl("logs/nodes.txt");
-const ms = jsonl("logs/milestones.txt");
+const nodes = jsonl(pick("nodes"));
+const ms = jsonl(pick("milestones"));
 if (!nodes.length) console.log("no cleared BitNode recorded yet (logs/nodes.txt)\n");
 for (const n of nodes) {
   console.log(`BN${n.node ?? "?"} cleared ${new Date(n.t).toISOString().slice(0, 16)}: ${h(n.durationMs)}, ${n.installs} installs, route ${n.route ?? "?"}`);

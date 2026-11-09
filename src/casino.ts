@@ -8,12 +8,13 @@
 // re-preps those targets), then starts the table script.
 import type { NS } from "@ns";
 import { SCRIPTS } from "./lib/paths.js";
+import { appendLine } from "./lib/io.js";
 
 const WORKERS: string[] = [SCRIPTS.hack, SCRIPTS.grow, SCRIPTS.weaken, SCRIPTS.share];
 
 /** Breadcrumbs pulled out of the game by the sync tool (logs/casino-trace.txt). */
 const TRACE = "data/casino-trace.txt";
-const trace = (ns: NS, msg: string) => ns.write(TRACE, `${new Date().toISOString()} launcher ${msg}\n`, "a");
+const trace = (ns: NS, msg: string) => appendLine(ns, TRACE, `${new Date().toISOString()} launcher ${msg}`);
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");

@@ -1,6 +1,6 @@
 // Analyses the sleeve shock-recovery experiment from logs/sleeves.txt (pulled from the game).
 //
-//   node tools/sleeve-shock.mjs [logs/sleeves.txt]
+//   node tools/sleeve-shock.mjs [file]   (default: logs/archive/sleeves.jsonl, else logs/sleeves.txt)
 //
 // Reports:
 //   1. shock decay (points/hour) by task: recovery vs. everything else (passive)
@@ -10,9 +10,10 @@
 //   4. break-even: an hour of recovery removes `extra` shock points beyond passive decay and
 //      costs an hour of output at (1 − S/100). It pays when the sleeve keeps the lower shock
 //      for at least H* = (1 − S/100) · 100 / extra hours (i.e. until the next shock reset).
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
-const file = process.argv[2] ?? "logs/sleeves.txt";
+// the local archive has the full history; logs/sleeves.txt only the in-game (capped) copy
+const file = process.argv[2] ?? (existsSync("logs/archive/sleeves.jsonl") ? "logs/archive/sleeves.jsonl" : "logs/sleeves.txt");
 const lines = readFileSync(file, "utf8")
   .split("\n")
   .filter(Boolean)

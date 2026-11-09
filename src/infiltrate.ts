@@ -15,7 +15,7 @@
 // Uses the DOM (25 GB while running); everything else goes through the call proxy.
 import type { NS } from "@ns";
 import { call } from "./lib/call.js";
-import { appendJsonl, readJson, writeJson } from "./lib/io.js";
+import { appendJsonl, appendLine, readJson, writeJson } from "./lib/io.js";
 import { DATA } from "./lib/paths.js";
 import {
   chooseTarget,
@@ -70,7 +70,7 @@ export async function main(ns: NS): Promise<void> {
   const faction = String(ns.args[0] ?? "");
   const st = readJson<InfiltrationState>(ns, DATA.infiltration, { t: 0, measured: {}, runs: 0, failures: 0, lastRun: null, note: "" });
   const event = (msg: string) => appendJsonl(ns, DATA.events, { t: Date.now(), kind: "infiltration", msg });
-  const trace = (msg: string) => ns.write(TRACE, `${new Date().toISOString()} ${msg}\n`, "a");
+  const trace = (msg: string) => appendLine(ns, TRACE, `${new Date().toISOString()} ${msg}`);
   const save = (note: string) => {
     writeJson(ns, DATA.infiltration, { ...st, t: Date.now(), note });
     if (note) event(note);

@@ -334,7 +334,7 @@ export async function main(ns: NS): Promise<void> {
       writeJson(ns, DATA.context, ctx);
       if (Date.now() - lastMetricsLine > 60_000) {
         lastMetricsLine = Date.now();
-        appendJsonl(ns, DATA.metrics, { ...metricsLine(s, m, hackStatus), systems: systemsLine(ns) }, 10_000);
+        appendJsonl(ns, DATA.metrics, { ...metricsLine(s, m, hackStatus), systems: systemsLine(ns) }, 1500);
       }
       draw(ns, s, m, hackStatus, current, recent);
     }
@@ -637,7 +637,7 @@ async function graftingModule(ns: NS, data: FactionData, p: Plan, dcfg: DaemonCo
       graftable: augs.length,
       rows: rows.slice(0, 25),
     },
-    2000,
+    200,
   );
 }
 
@@ -837,7 +837,7 @@ async function factionsModule(
   if (Date.now() - lastCompanyLog > 5 * 60_000 || routeKey !== lastCompanyKey) {
     lastCompanyLog = Date.now();
     lastCompanyKey = routeKey;
-    appendJsonl(ns, DATA.company, { t: Date.now(), chosen: p.company, grindScore: p.grindScore, routes: p.companyRoutes, companies: data.companies }, 2000);
+    appendJsonl(ns, DATA.company, { t: Date.now(), chosen: p.company, grindScore: p.grindScore, routes: p.companyRoutes, companies: data.companies }, 300);
   }
   if (dcfg.manageGang) await gangModule(ns, data, p, dcfg, event, m.sinceInstall);
 
@@ -877,7 +877,7 @@ async function factionsModule(
       // shock-recovery experiment: one line per minute (tools/sleeve-shock.mjs to analyse later)
       if (Date.now() - lastSleeveLog > 60_000) {
         lastSleeveLog = Date.now();
-        appendJsonl(ns, DATA.sleeves, { t: Date.now(), sleeves: rep.rows, observedRep: m.short.rep, sleeveIncome: m.short.bySource.sleeves ?? 0 }, 20_000);
+        appendJsonl(ns, DATA.sleeves, { t: Date.now(), sleeves: rep.rows, observedRep: m.short.rep, sleeveIncome: m.short.bySource.sleeves ?? 0 }, 1500);
       }
       for (const c of rep.changed) event("sleeve", c);
       if (rep.augsBought) event("sleeve", `bought ${rep.augsBought} sleeve augmentation(s)`);
