@@ -32,6 +32,8 @@ import type { BbConfig } from "./lib/plan/bladeburner.js";
 import { DEFAULT_RECOVERY, type RecoveryConfig } from "./lib/plan/sleeves.js";
 import { DEFAULT_STOCKS, type StockConfig } from "./lib/plan/stocks.js";
 import type { StocksControl, StocksStatus } from "./stocks/manager.js";
+import type { HacknetControl, HacknetStatus } from "./hacknet/manager.js";
+import type { HacknetConfig } from "./lib/plan/hacknet.js";
 
 interface DaemonConfig {
   tickMs: number;
@@ -55,6 +57,9 @@ interface DaemonConfig {
   manageContracts: boolean;
   contractsEveryMs: number;
   /** Trade stocks with 4S data (stocks/manager.js, ~37 GB) once home has stocksMinHomeGB. */
+  /** Hacknet servers: spend hashes by value, buy production by payback (hacknet/manager.js). */
+  manageHacknet: boolean;
+  hacknet: Partial<HacknetConfig>;
   manageStocks: boolean;
   stocks: Partial<StockConfig>;
   stocksMinHomeGB: number;
@@ -80,6 +85,8 @@ const DEFAULTS: DaemonConfig = {
   gang: {},
   manageContracts: true,
   contractsEveryMs: 5 * 60_000,
+  manageHacknet: true,
+  hacknet: {},
   manageStocks: true,
   stocks: {},
   stocksMinHomeGB: 512,
@@ -168,6 +175,18 @@ export async function main(ns: NS): Promise<void> {
         event("stocks", "started stock manager");
     }
 
+    // ---- hacknet: budget follows the planner's infra share; no buying while the casino bets ----
+    // hacknet *servers* (hashes) need SF9 or BitNode 9; plain hacknet nodes make money instead
+    const hashServers = !!s && ((s.sourceFiles["9"] ?? 0) > 0 || s.node === 9);
+    if (cfg.manageHacknet && hashServers) {
+      const ctl: HacknetControl = {
+        buy: !ns.isRunning(SCRIPTS.casinoTable, "home"),
+        cfg: { budgetFrac: Math.max(0.05, current?.infraSpend ?? 0.25), ...cfg.hacknet },
+      };
+      writeJson(ns, DATA.hacknetConfig, ctl);
+      if (!ns.isRunning(SCRIPTS.hacknetManager, "home") && ns.exec(SCRIPTS.hacknetManager, "home")) event("hacknet", "started hacknet manager");
+    }
+
     // ---- coding contracts (and, once per build, the solver self-test on dummies) ----
     if (cfg.manageContracts) {
       if (!selftestStarted && readJson<{ build?: string }>(ns, DATA.contractsSelftest, {}).build !== build)
@@ -181,6 +200,7 @@ export async function main(ns: NS): Promise<void> {
     if (cfg.go.enabled !== false) wanted.push(SCRIPTS.goManager);
     if (bladeburnerWanted) wanted.push(SCRIPTS.bladeburnerManager);
     if (cfg.manageStocks && ns.getServerMaxRam("home") >= cfg.stocksMinHomeGB) wanted.push(SCRIPTS.stocksManager);
+    if (cfg.manageHacknet && s && ((s.sourceFiles["9"] ?? 0) > 0 || s.node === 9)) wanted.push(SCRIPTS.hacknetManager);
     // keep room for the casino table while this install's $10b allowance is unclaimed
     if (s && cfg.casino && (s.earned.casino ?? 0) < CASINO_CAP) wanted.push(SCRIPTS.casinoTable);
     // plus room for the Stanek charger while it waits for a big enough block of home RAM
@@ -607,6 +627,11 @@ function draw(
     L.push(`  ${pad(f, 24)} ${pad(num(rep), 9, true)} rep  ${pad(num(r.rep[f] ?? 0), 8, true)}/s  favor ${num(s.favor[f] ?? 0, 0)}`);
   if (s.invites.length) L.push(`  invites: ${s.invites.join(", ")}`);
 
+  const hn = readJson<Partial<HacknetStatus>>(ns, DATA.hacknet, {});
+  if (hn.t && Date.now() - hn.t < 120_000)
+    L.push(
+      `hacknet: ${hn.servers ?? 0} servers  ${num(hn.production ?? 0)} h/s  ${num(hn.hashes ?? 0)}/${num(hn.capacity ?? 0)} hashes  ${hn.decision || hn.note || ""}`,
+    );
   const st = readJson<Partial<StocksStatus>>(ns, DATA.stocks, {});
   if (st.t && Date.now() - st.t < 120_000)
     L.push(

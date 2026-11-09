@@ -13,6 +13,8 @@ export interface ContractsState {
   failed: string[]; // "host:file"
   unsupported: Record<string, number>; // type → count seen
   lastReward: string;
+  /** recent money rewards in $ (the hacknet manager values "Generate Coding Contract" by these) */
+  moneyRewards?: number[];
   /** last scan: when, how many servers were checked and how many contracts were on them */
   lastRun?: number;
   hostsScanned?: number;
@@ -59,6 +61,8 @@ export async function main(ns: NS): Promise<void> {
         }
         st.solved++;
         st.lastReward = reward;
+        const usd = parseMoney(reward);
+        if (usd > 0) st.moneyRewards = [...(st.moneyRewards ?? []), usd].slice(-20);
         done.push(`${kind}: ${reward}`);
         appendJsonl(ns, DATA.events, { t: Date.now(), kind: "contract", msg: `solved ${kind} on ${host}: ${reward}` });
       }
@@ -68,4 +72,12 @@ export async function main(ns: NS): Promise<void> {
     writeJson(ns, DATA.contracts, st);
     return done;
   });
+}
+
+/** "Gained $15.543m" → 15_543_000 (0 if the reward isn't money). */
+export function parseMoney(reward: string): number {
+  const m = /\$([\d.]+)([kmbtq]?)/i.exec(reward);
+  if (!m) return 0;
+  const mult: Record<string, number> = { "": 1, k: 1e3, m: 1e6, b: 1e9, t: 1e12, q: 1e15 };
+  return Number(m[1]) * (mult[m[2].toLowerCase()] ?? 1);
 }

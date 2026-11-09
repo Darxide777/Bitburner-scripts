@@ -54,6 +54,7 @@ daemon.js                 orchestrator: telemetry → metrics → planner module
 ├─ gang/manager.js        long-running gang manager, ticks on every gang update
 ├─ stanek/charge.js       one big charging process for Stanek's Gift (spawned after installs)
 ├─ go/play.js             IPvGO manager: our own MCTS player + matchup picker
+├─ hacknet/manager.js     hacknet servers: hashes by value, production by payback (~10 GB, SF9)
 ├─ stocks/manager.js      4S-forecast stock trader, longs + shorts (~37 GB, home ≥ 512 GB)
 ├─ bladeburner/manager.js Bladeburner: join, skills, city, actions (~73 GB, home ≥ 512 GB)
 └─ casino.js              blackjack save-scummer for the casino's $10b-per-install allowance
@@ -143,6 +144,18 @@ and crime). Each update:
 - otherwise the contract/operation with the most expected rank/s (≥70% contracts, ≥80% ops;
   Raid and Stealth Retirement skipped), without abandoning an action halfway
 - skills bought greedily by weight per point; moves to the city with the largest estimated population
+
+**Hacknet** (`lib/plan/hacknet.ts` decides, `hacknet/manager.ts` acts; needs SF9). Every hash
+upgrade is priced in money-equivalent $ per hash from measured data: Sell for Money ($1m / 4
+hashes, the floor); Increase Maximum Money and Reduce Minimum Security on each hacking target
+(its $/s from `data/hack.txt` × the gain × the expected rest of the run, the median of recent run
+lengths); Bladeburner Rank (seconds of progress saved at the measured rank/s, capped at what's
+left to Operation Daedalus, × income/s); Generate Coding Contract (average measured money
+reward). It buys the best one, saves for it when it beats selling and fits the cache, else
+sells; it measures each purchase's real effect and uses that instead of the 2% default.
+Production (level/RAM/cores/servers) is bought by payback time — it must pay back within half
+the expected rest of the run, since installs wipe hacknet servers — with the planner's infra
+share of cash, and not while the casino bets. `data/hacknet.txt` shows the ranked options.
 
 **Stocks** (`lib/plan/stocks.ts` decides, `stocks/manager.ts` acts). Buys a WSE account, TIX API
 and 4S Market Data TIX API once each costs ≤20% of cash (they survive installs), then trades on
@@ -258,7 +271,8 @@ faction-working.
 - [x] Gang: creation, recruit, equipment, training, respect/money mode, wanted control,
       territory warfare, ascension
 - [ ] Gang: account for v3's install penalty on ascension multipliers (`getInstallResult`)
-- [ ] Hacknet servers + hash spending
+- [x] Hacknet servers: data-priced hash spending, payback-based production
+- [ ] Hacknet: value SP, gym/study and company favor; use hacknet RAM when it beats hashes
 - [x] Bladeburner: join (after Stanek), skills, city, stamina/chaos control, contracts/ops/black ops
 - [x] Bladeburner first: gym training to join early, Operation Daedalus as a win condition
 - [x] Sleeves on Bladeburner contracts; shock-recovery rotation + experiment telemetry

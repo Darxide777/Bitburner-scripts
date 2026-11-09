@@ -15,6 +15,8 @@ export const DATA = {
   goConfig: "data/go-config.txt", // IPvGO tunables
   contracts: "data/contracts.txt", // coding contracts: totals + ones we failed (never retried)
   contractsSelftest: "data/contracts-selftest.txt", // per-build check of every solver on dummy contracts
+  hacknet: "data/hacknet.txt", // hacknet manager status (options, decision, measured effects)
+  hacknetConfig: "data/hacknet-config.txt", // hacknet control, written by the daemon
   sleeves: "data/sleeves.txt", // JSONL per minute: sleeve shock/task/predicted rep (shock experiment)
   stocks: "data/stocks.txt", // stock manager status (portfolio value counts as money)
   stocksConfig: "data/stocks-config.txt", // stock control, written by the daemon
@@ -31,6 +33,7 @@ export const SCRIPTS = {
   goManager: "go/play.js",
   bladeburnerManager: "bladeburner/manager.js",
   stocksManager: "stocks/manager.js",
+  hacknetManager: "hacknet/manager.js",
   casinoTable: "casino/table.js", // the DOM-driving script (~36 GB)
   hack: "hack/w/h.js",
   grow: "hack/w/g.js",

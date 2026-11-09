@@ -6,7 +6,14 @@ import { appendJsonl } from "../lib/io.js";
 import { DATA, SCRIPTS } from "../lib/paths.js";
 
 /** Managers the daemon starts again by itself when they're missing. */
-const MANAGERS: string[] = [SCRIPTS.hackManager, SCRIPTS.gangManager, SCRIPTS.goManager];
+const MANAGERS: string[] = [
+  SCRIPTS.hackManager,
+  SCRIPTS.gangManager,
+  SCRIPTS.goManager,
+  SCRIPTS.stocksManager,
+  SCRIPTS.bladeburnerManager,
+  SCRIPTS.hacknetManager,
+];
 
 export async function main(ns: NS): Promise<void> {
   for (const p of ns.ps("home")) if (MANAGERS.includes(p.filename)) ns.kill(p.pid);
