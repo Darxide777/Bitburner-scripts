@@ -24,6 +24,8 @@ export interface HackConfig {
   share: number;
   /** servers to leave alone entirely (e.g. the Stanek charger's) */
   skipHosts?: string[];
+  /** share of the pool running weaken for hacking XP (0 = off), see xpFarm() */
+  xpShare?: number;
 }
 export const DEFAULT_HACK_CONFIG: HackConfig = { homeReserve: 32, maxTargets: 6, spacing: 60, share: 0 };
 
@@ -64,6 +66,7 @@ export async function main(ns: NS): Promise<void> {
   let lastStatus = 0;
   let tag = 0;
   let shareThreads = 0;
+  const xp: XpState = { busyUntil: 0, target: "", threads: 0, expPerSec: 0 };
 
   const hasFormulas = () => ns.fileExists("Formulas.exe", "home");
 
@@ -91,6 +94,12 @@ export async function main(ns: NS): Promise<void> {
     if (Date.now() - lastRank > 30_000 || ranked.length === 0) {
       ranked = rankTargets(ns, hosts, player, ramOf, hasFormulas());
       lastRank = Date.now();
+    }
+
+    // ---- hacking XP (a hacking level gates something): weaken the best XP-per-second server ----
+    if ((cfg.xpShare ?? 0) > 0 && hasFormulas() && Date.now() >= xp.busyUntil) {
+      const budget = sum(pool) * (cfg.xpShare ?? 0);
+      xpFarm(ns, hosts, ranked.slice(0, cfg.maxTargets), player, pool, budget, ramOf.w, xp, () => tag++);
     }
 
     // ---- schedule targets, best first ----
@@ -137,6 +146,7 @@ export async function main(ns: NS): Promise<void> {
         poolTotal,
         poolFreeAfter: sum(pool),
         shareThreads,
+        xp: (cfg.xpShare ?? 0) > 0 ? { ...xp } : null,
         expectedPerSec: targets.reduce((a, t) => a + t.ratePerSec, 0),
         targets,
       });
@@ -355,4 +365,60 @@ function prep(
   st.expected = 0;
   st.busyUntil = land + 2 * S + 300;
   st.cycleMs = st.busyUntil - Date.now();
+}
+
+interface XpState {
+  busyUntil: number;
+  target: string;
+  threads: number;
+  /** hacking XP per second this round is expected to give */
+  expPerSec: number;
+}
+
+/**
+ * Hacking XP: weaken gives the same XP per thread as a successful hack and never touches
+ * money, so a block of weaken threads on the server with the most XP per second of weaken
+ * time (formulas: hackExp at min security / weakenTime) farms XP. Batch targets are skipped
+ * (extra weakens would only disturb their timing); one round at a time.
+ */
+function xpFarm(
+  ns: NS,
+  hosts: string[],
+  skip: string[],
+  player: Player,
+  pool: Pool,
+  budgetGB: number,
+  ramPer: number,
+  xp: XpState,
+  nextTag: () => number,
+): void {
+  const F = ns.formulas.hacking;
+  let best: { host: string; rate: number; time: number } | null = null;
+  for (const h of hosts) {
+    if (h === "home" || isHacknet(h) || skip.includes(h) || !ns.hasRootAccess(h)) continue;
+    const s = ns.getServer(h);
+    if (s.purchasedByPlayer || (s.requiredHackingSkill ?? 0) > player.skills.hacking) continue;
+    const atMin = { ...s, hackDifficulty: s.minDifficulty };
+    const time = F.weakenTime(atMin, player);
+    const rate = F.hackExp(atMin, player) / Math.max(1, time);
+    if (time > 0 && (!best || rate > best.rate)) best = { host: h, rate, time };
+  }
+  if (!best) return;
+  const threads = Math.floor(budgetGB / ramPer);
+  if (threads < 1) return;
+  // place what fits (smaller rounds are fine: XP is per thread)
+  let placed = 0;
+  for (const [h, free] of [...pool.entries()].sort((a, b) => b[1] - a[1])) {
+    const fit = Math.min(threads - placed, Math.floor(free / ramPer));
+    if (fit < 1) continue;
+    if (ns.exec(SCRIPTS.weaken, h, { threads: fit, temporary: true }, best.host, 0, nextTag())) {
+      pool.set(h, free - fit * ramPer);
+      placed += fit;
+    }
+    if (placed >= threads) break;
+  }
+  if (!placed) return;
+  // the current security may be above min: the round takes as long as its actual weaken
+  const actual = ns.formulas.hacking.weakenTime(ns.getServer(best.host), player);
+  Object.assign(xp, { busyUntil: Date.now() + actual + 200, target: best.host, threads: placed, expPerSec: best.rate * placed });
 }

@@ -92,6 +92,15 @@ collects faction/aug state and the planner decides:
   work type with the highest rep/s from Formulas. With nothing left to grind, it builds rep for
   NeuroFlux, then falls back to crime (karma toward a gang).
 - *travel / backdoor*: when a wanted faction is missing only a city or a backdoor, go get it.
+- *skill gates* (hacking, charisma): a skill level that blocks something valuable — a faction
+  invite, the easiest company job in a useful field, or w0r1d_d43m0n's hack level. Hacking: the
+  hacking manager puts `hackXpShare` (50%) of the pool on weaken for XP (weaken gives a hack's XP
+  per thread and never touches money) on the server with the most XP per second, until the gate
+  clears. Study (player time): XP still needed for the level — the game's skill formula inverted
+  with the multiplier calibrated from current level and XP — ÷ the best course's XP/s
+  (`formulas.work.universityGains`: Algorithms for hacking, Leadership for charisma) gives the
+  study time; the gate's value ÷ (study + the rep it then needs) competes with faction work and
+  company routes like a company route does (20% margin, or when there's nothing better).
 - *company work* (megacorp factions): for factions whose invite needs company rep or a job,
   the route's value per second is the faction's best aug ÷ (company rep still needed at the
   formula rate of the best position you qualify for + that aug's faction rep at your average
@@ -365,7 +374,8 @@ it in the hacking reserve, and `tasks/restart.js` restarts it on every new build
 - [x] Stanek's Gift: acceptance, layout solver, per-install charging
 - [x] IPvGO: rules engine, MCTS player, self-optimizing matchup choice
 - [x] Company work → megacorp factions, when the route beats faction work (logged to judge it)
-- [ ] Hacking-XP mode when the hack level gates the next faction or w0r1d_d43m0n
+- [x] Skill gates: hacking-XP farming and study (hacking/charisma) when a level blocks a faction,
+      a company job, or w0r1d_d43m0n
 - [x] Shrink the home reserve: daemon 33 → ~8 GB (`window` DOM charge), faction actions via the
       proxy (34 GB task gone), contracts on spare RAM, corp proxy reserve only with a corp
 - [x] Sleeves: karma for the gang, then one per grind faction; shock recovery; sleeve augs

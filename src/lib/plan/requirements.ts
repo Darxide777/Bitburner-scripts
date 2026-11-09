@@ -23,7 +23,9 @@ export type Fix =
   | { kind: "travel"; city: string }
   | { kind: "backdoor"; server: string }
   /** work for `company` until its rep reaches `rep` (0 = just be employed there) */
-  | { kind: "company"; company: string; rep: number };
+  | { kind: "company"; company: string; rep: number }
+  /** raise a skill to `level` (hacking: XP scripts / study; charisma: study) */
+  | { kind: "skill"; skill: string; level: number };
 
 export interface ReqResult {
   met: boolean;
@@ -62,7 +64,7 @@ function check(r: PlayerRequirement, c: ReqContext): Check {
       return { ok: c.money >= r.money, why: `money ≥ ${r.money}` };
     case "skills": {
       for (const [k, v] of Object.entries(r.skills)) {
-        if ((c.skills[k] ?? 0) < (v ?? 0)) return { ok: false, why: `${k} ≥ ${v}` };
+        if ((c.skills[k] ?? 0) < (v ?? 0)) return { ok: false, why: `${k} ≥ ${v}`, fix: { kind: "skill", skill: k, level: v ?? 0 } };
       }
       return { ok: true, why: "" };
     }

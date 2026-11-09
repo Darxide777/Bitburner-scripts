@@ -35,6 +35,16 @@ export interface CompanyInfo {
   position: string | null;
   field: string | null;
   repPerSec: number;
+  /** no position yet: the skill levels the easiest one in a useful field needs */
+  skillGate?: Record<string, number>;
+}
+
+/** The best university course for a skill: where, which, and the XP per second it gives. */
+export interface StudyOption {
+  university: string;
+  city: string;
+  course: string;
+  expPerSec: number;
 }
 
 export interface FactionData {
@@ -66,6 +76,10 @@ export interface FactionData {
   jobs: Record<string, string>;
   /** companies that unjoined factions' invites depend on */
   companies?: Record<string, CompanyInfo>;
+  /** current XP per skill (with `skills`, calibrates XP needed for a level) */
+  exp?: Record<string, number>;
+  /** best study option per skill ("hacking", "charisma"); needs Formulas.exe */
+  study?: Record<string, StudyOption>;
   /** w0r1d_d43m0n status (only present after The Red Pill is installed). */
   /** inScan: reachable by scan() from home (newer versions may not link it in) */
   worldDaemon: { exists: boolean; inScan?: boolean; rooted: boolean; reqHack: number };

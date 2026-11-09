@@ -15,6 +15,8 @@ export interface ActArgs {
   train?: { stat: string; gym: string; city: string; focus: boolean } | null;
   /** company work for a faction invite (after training, before faction work) */
   company?: { company: string; field: string; focus: boolean } | null;
+  /** a university course for a skill gate (after training, before company work) */
+  study?: { university: string; city: string; course: string; focus: boolean } | null;
 }
 
 interface CurrentWork {
@@ -50,6 +52,13 @@ export async function act(ns: NS, a: ActArgs, city: string): Promise<string[]> {
     if (!same) {
       if (city !== t.city && (await call<boolean>(ns, S + "travelToCity", t.city))) done.push(`travelled to ${t.city}`);
       if (await call<boolean>(ns, S + "gymWorkout", t.gym, t.stat, t.focus)) done.push(`training ${t.stat} at ${t.gym}`);
+    }
+  } else if (a.study) {
+    const s = a.study;
+    const same = cur?.type === "CLASS" && cur.classType === s.course && cur.location === s.university;
+    if (!same) {
+      if (city !== s.city && (await call<boolean>(ns, S + "travelToCity", s.city))) done.push(`travelled to ${s.city}`);
+      if (await call<boolean>(ns, S + "universityCourse", s.university, s.course, s.focus)) done.push(`studying ${s.course} at ${s.university}`);
     }
   } else if (a.company) {
     const c = a.company;

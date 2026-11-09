@@ -68,6 +68,8 @@ interface DaemonConfig {
    * missing, holds home RAM for it, and restarts it on new builds. See README "User modules".
    */
   userModules: UserModule[];
+  /** Share of the hacking pool farming XP while a hacking level gates something (plan.hackXp). */
+  hackXpShare: number;
   /** Log graftable augs (value vs. entropy and time) every 10 min; no grafting yet. */
   logGrafting: boolean;
   /** Infiltration autoplayer (infiltrate.js) when it beats faction work for the grind faction. */
@@ -104,6 +106,7 @@ const DEFAULTS: DaemonConfig = {
   manageContracts: true,
   contractsEveryMs: 5 * 60_000,
   userModules: [],
+  hackXpShare: 0.5,
   logGrafting: true,
   manageInfiltration: true,
   infiltration: {},
@@ -279,6 +282,8 @@ export async function main(ns: NS): Promise<void> {
       homeReserve: reserve,
       // lend spare RAM to factions while we are working for one
       share: s?.work?.type === "FACTION" ? 1 : 0,
+      // hacking level gating something valuable: farm hacking XP with part of the pool
+      xpShare: current?.hackXp ? cfg.hackXpShare : 0,
       skipHosts: [...(stanekStatus?.reserveHosts ?? []), ...(readJson<{ hosts?: string[] }>(ns, DATA.userReserve, {}).hosts ?? [])],
     };
     writeJson(ns, DATA.hackConfig, hackCfg);
@@ -689,7 +694,16 @@ async function factionsModule(
     return p;
   }
 
-  const act: ActArgs = { join: p.join, travelTo: p.travelTo, work: p.work, crime: p.crime, buyNow: p.buyNow, train: p.train, company: p.company };
+  const act: ActArgs = {
+    join: p.join,
+    travelTo: p.travelTo,
+    work: p.work,
+    crime: p.crime,
+    buyNow: p.buyNow,
+    train: p.train,
+    company: p.company,
+    study: p.study,
+  };
   // casino.js drives the UI (blackjack table); work/travel would navigate away from it
   const casinoBetting = ns.isRunning(SCRIPTS.casinoTable, "home");
   const infiltrating = await infiltrationModule(ns, data, p, dcfg, casinoBetting, event);
@@ -701,6 +715,7 @@ async function factionsModule(
     act.travelTo = null;
     act.train = null;
     act.company = null;
+    act.study = null;
   }
   // the planner is stateless; a cooldown stops it from bouncing between cities
   if (act.travelTo) {
@@ -712,6 +727,7 @@ async function factionsModule(
     act.work = null;
     act.crime = null;
     act.company = null;
+    act.study = null;
   }
   // company-route data, every 5 min (or on a change): is company work the better path?
   const routeKey = `${p.company?.company ?? ""}|${p.companyRoutes[0]?.faction ?? ""}`;

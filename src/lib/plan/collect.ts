@@ -6,7 +6,7 @@ import type { Multipliers, NS, Player, PlayerRequirement, ResetInfo, Server } fr
 import { callEach, call } from "../call.js";
 import { allHosts } from "../net.js";
 import { WORLD_DAEMON } from "../paths.js";
-import { NEURORECEPTOR, type AugInfo, type CompanyInfo, type FactionData, type FactionInfo } from "./data.js";
+import { NEURORECEPTOR, type AugInfo, type CompanyInfo, type FactionData, type FactionInfo, type StudyOption } from "./data.js";
 
 const PROGRAM_FILES = ["BruteSSH.exe", "FTPCrack.exe", "relaySMTP.exe", "HTTPWorm.exe", "SQLInject.exe", "Formulas.exe"];
 
@@ -177,7 +177,36 @@ export async function collectFactionData(ns: NS): Promise<FactionData> {
     worldDaemon,
     jobs: { ...p.jobs } as Record<string, string>,
     companies: await collectCompanies(ns, p, notJoined.flatMap((f) => reqs.get(f) ?? []), formulas),
+    exp: { ...(p.exp as unknown as Record<string, number>) },
+    study: formulas ? await collectStudy(ns, p) : {},
   };
+}
+
+const UNIVERSITIES: [string, string][] = [
+  ["ZB Institute of Technology", "Volhaven"],
+  ["Summit University", "Aevum"],
+  ["Rothman University", "Sector-12"],
+];
+/** course per skill (the best-XP one for each) and the WorkStats field it fills */
+const COURSES: [string, string, "hackExp" | "chaExp"][] = [
+  ["hacking", "Algorithms", "hackExp"],
+  ["charisma", "Leadership", "chaExp"],
+];
+
+/** Best university course per skill, by formulas.work.universityGains (XP per second). */
+async function collectStudy(ns: NS, p: Player): Promise<Record<string, StudyOption>> {
+  const combos = COURSES.flatMap(([skill, course, field]) => UNIVERSITIES.map(([u, city]) => ({ skill, course, field, u, city })));
+  const gains = await callEach<Record<string, number>>(
+    ns,
+    "formulas.work.universityGains",
+    combos.map((c) => [p, c.course, c.u]),
+  );
+  const out: Record<string, StudyOption> = {};
+  combos.forEach((c, k) => {
+    const perSec = (gains[k]?.[c.field] ?? 0) * 5; // per 200 ms cycle → per second
+    if (perSec > (out[c.skill]?.expPerSec ?? 0)) out[c.skill] = { university: c.u, city: c.city, course: c.course, expPerSec: perSec };
+  });
+  return out;
 }
 
 /** Job fields worth working in (company rep from hacking/charisma work). */
@@ -225,6 +254,18 @@ async function collectCompanies(ns: NS, p: Player, reqs: PlayerRequirement[], fo
   const out: Record<string, CompanyInfo> = {};
   for (const c of list)
     out[c] = { rep: rep.get(c) ?? 0, favor: favor.get(c) ?? 0, job: jobs[c] ?? null, position: null, field: null, repPerSec: 0 };
+  // where no position qualifies: the skills the easiest useful one (lowest total shortfall) needs
+  const skills = p.skills as unknown as Record<string, number>;
+  pairs.forEach(([c], k) => {
+    const i = infos[k];
+    if (!i || !JOB_FIELDS.includes(i.field) || i.requiredReputation > (rep.get(c) ?? 0)) return;
+    const short = Object.entries(i.requiredSkills).filter(([s, v]) => (skills[s] ?? 0) < v);
+    if (!short.length) return;
+    const gap = short.reduce((a, [s, v]) => a + (v - (skills[s] ?? 0)), 0);
+    const cur = out[c].skillGate;
+    const curGap = cur ? Object.entries(cur).reduce((a, [s, v]) => a + (v - (skills[s] ?? 0)), 0) : Infinity;
+    if (gap < curGap) out[c].skillGate = Object.fromEntries(short);
+  });
   cands.forEach(([c, pos], k) => {
     const perSec = (gains[k]?.reputation ?? 0) * 5; // per 200 ms cycle → per second
     if (perSec > out[c].repPerSec) {

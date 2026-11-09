@@ -1,7 +1,7 @@
 // Planner unit tests (run against the compiled output: `npm test`).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { plan, escalatedCost, purchaseOrder, augValue, bestNfgFaction, DEFAULT_PLAN } from "../dist/lib/plan/factions.js";
+import { plan, escalatedCost, purchaseOrder, augValue, bestNfgFaction, expToLevel, DEFAULT_PLAN } from "../dist/lib/plan/factions.js";
 
 const fac = (o = {}) => ({
   joined: false, invited: false, rep: 0, favor: 0, favorGain: 0, enemies: [], workTypes: [],
@@ -290,4 +290,57 @@ test("company rep counts toward invites once earned", () => {
   const p = plan(input(w));
   assert.equal(p.company, null, "requirement met: nothing left to earn there");
   assert.equal(p.companyRoutes.length, 0);
+});
+
+test("expToLevel inverts the game's skill formula with a calibrated multiplier", () => {
+  // the game: skill = floor(m·(32·ln(exp + 534.6) − 200))
+  const skill = (exp, m) => m * (32 * Math.log(exp + 534.6) - 200);
+  for (const m of [0.5, 1, 2.7]) {
+    const exp0 = 5e5;
+    const lvl0 = skill(exp0, m);
+    const need = expToLevel(lvl0 * 1.5, lvl0, exp0);
+    assert.ok(Math.abs(skill(exp0 + need, m) - lvl0 * 1.5) < 1e-6, `m=${m}`);
+  }
+  assert.equal(expToLevel(10, 20, 1e4), 0);
+});
+
+function gateWorld(o = {}) {
+  const w = world({ money: 1e15, installed: ["HackA", "RepB"], skills: { hacking: 100, charisma: 50 }, exp: { hacking: 1e4, charisma: 2000 } });
+  w.study = {
+    hacking: { university: "ZB Institute of Technology", city: "Volhaven", course: "Algorithms", expPerSec: 50 },
+    charisma: { university: "ZB Institute of Technology", city: "Volhaven", course: "Leadership", expPerSec: 50 },
+  };
+  w.factions.Charm = fac({ augs: ["Charm Aug"], requirements: [{ type: "skills", skills: { charisma: 60 } }] });
+  w.augs["Charm Aug"] = aug({ repReq: 100, price: 1e6, factions: ["Charm"], stats: { hacking: 3 } });
+  return Object.assign(w, o);
+}
+
+test("skill gates: study charisma for a valuable gated faction; nothing when disabled", () => {
+  const p = plan(input(gateWorld()));
+  assert.equal(p.skillGates[0].target, "Charm");
+  assert.deepEqual(p.skillGates[0].needs, { charisma: 60 });
+  assert.equal(p.study?.course, "Leadership");
+  assert.equal(p.study?.city, "Volhaven");
+  assert.equal(p.work, null);
+  assert.equal(p.hackXp, null, "no hacking gate");
+  assert.equal(plan(input(gateWorld()), { ...DEFAULT_PLAN, skillWork: false }).study, null);
+});
+
+test("w0r1d_d43m0n's hack level turns on XP farming", () => {
+  const w = gateWorld({ installed: ["HackA", "RepB", "The Red Pill"], worldDaemon: { exists: true, rooted: true, reqHack: 3000 } });
+  const p = plan(input(w));
+  assert.deepEqual(p.hackXp, { level: 3000, why: "w0r1d_d43m0n" });
+  assert.ok(p.skillGates.some((g) => g.target === "w0r1d_d43m0n"));
+});
+
+test("a company job blocked by a skill is a gate; company work alone is no route then", () => {
+  const w = gateWorld();
+  delete w.factions.Charm;
+  w.factions.ECorp = fac({ augs: ["ECorp Aug"], requirements: [{ type: "companyReputation", company: "ECorp", reputation: 1000 }] });
+  w.augs["ECorp Aug"] = aug({ repReq: 100, price: 1e6, factions: ["ECorp"], stats: { hacking: 3 } });
+  w.companies = { ECorp: { rep: 0, favor: 0, job: null, position: null, field: null, repPerSec: 0, skillGate: { charisma: 75 } } };
+  const p = plan(input(w));
+  assert.equal(p.companyRoutes.length, 0, "no qualifying job → no company route");
+  assert.equal(p.skillGates[0].target, "ECorp job (for ECorp)");
+  assert.equal(p.study?.skill, "charisma");
 });

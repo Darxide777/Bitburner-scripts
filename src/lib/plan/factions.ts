@@ -42,6 +42,10 @@ export interface PlanConfig {
   companyWork: boolean;
   /** a company route must beat the best faction grind by this factor */
   companyMargin: number;
+  /** Raise hacking (XP scripts, study) / charisma (study) when a skill gates something valuable. */
+  skillWork: boolean;
+  /** value of destroying the BitNode, for the hacking level w0r1d_d43m0n needs */
+  destroyValue: number;
   weights: Record<string, number>;
 }
 
@@ -58,6 +62,8 @@ export const DEFAULT_PLAN: PlanConfig = {
   bladeburnerFirst: true,
   companyWork: true,
   companyMargin: 1.2,
+  skillWork: true,
+  destroyValue: 50,
   // Church of the Machine God augs, wanted for the Stanek path: valued above their listed stats
   augBonus: { "Stanek's Gift - Awakening": 3, "Stanek's Gift - Serenity": 3 },
   // value of +100% in each multiplier (cost multipliers count as reductions)
@@ -132,6 +138,12 @@ export interface Plan {
   companyRoutes: CompanyRoute[];
   /** value per second of the best faction grind, for comparison */
   grindScore: number;
+  /** hacking level something valuable is waiting for: the hacking manager farms XP meanwhile */
+  hackXp: { level: number; why: string } | null;
+  /** study a skill (player time) for a gate worth more than the alternatives */
+  study: { university: string; city: string; course: string; skill: string; focus: boolean } | null;
+  /** skill gates found, best value per second first (logged to judge them) */
+  skillGates: SkillGate[];
   /** Gym training (combat stat) to reach the Bladeburner division's 100-in-each requirement. */
   train: { stat: string; gym: string; city: string; focus: boolean } | null;
   /** Why destroy is (not) happening: Red Pill installed, w0r1d_d43m0n seen/rooted, hack level vs req. */
@@ -173,6 +185,26 @@ export interface PlanInput {
   ratesReady?: boolean;
   /** Bladeburner manager state: in the division, and whether actions can run alongside work. */
   bladeburner?: { inDivision: boolean; simulacrum: boolean; canJoin?: boolean };
+}
+
+/** XP still needed to reach `level`, calibrated from the current level and XP (the game: skill = m·(32·ln(exp + 534.6) − 200)). */
+export function expToLevel(level: number, curLevel: number, curExp: number): number {
+  if (curLevel >= level) return 0;
+  const base = 32 * Math.log(curExp + 534.6) - 200;
+  const m = base > 0 ? Math.max(1e-9, curLevel / base) : 1; // effective multiplier (augs × BitNode)
+  return Math.max(0, Math.exp((level / m + 200) / 32) - 534.6 - curExp);
+}
+
+export interface SkillGate {
+  /** what it unlocks: a faction, a company job, or "w0r1d_d43m0n" */
+  target: string;
+  needs: Record<string, number>;
+  value: number;
+  /** seconds of study for the skills that can be studied (Infinity if one can't) */
+  studySec: number;
+  /** seconds after the skills: rep to earn */
+  afterSec: number;
+  score: number;
 }
 
 export interface CompanyRoute {
@@ -357,7 +389,8 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
       const r = evaluate(F[f].requirements, reqCtx);
       if (r.met || !r.fixes) continue;
       const cfix = r.fixes.filter((x): x is Extract<typeof x, { kind: "company" }> => x.kind === "company");
-      if (!cfix.length) continue;
+      // company work alone must be enough (a missing skill is a skill gate, handled below)
+      if (!cfix.length || r.fixes.some((x) => x.kind === "skill")) continue;
       let companySec = 0;
       let binding = cfix[0];
       for (const x of cfix) {
@@ -379,6 +412,73 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
       }
     }
   companyRoutes.sort((a, b) => b.score - a.score);
+
+  // ---------- skill gates: hacking / charisma levels that block something valuable ----------
+  const skillGates: SkillGate[] = [];
+  const studyable = ["hacking", "charisma"];
+  const studySecFor = (needs: Record<string, number>) => {
+    let sec = 0;
+    for (const [sk, lvl] of Object.entries(needs)) {
+      const opt = data.study?.[sk];
+      if (!studyable.includes(sk) || !opt || opt.expPerSec <= 0) return Infinity;
+      sec += expToLevel(lvl, data.skills[sk] ?? 0, data.exp?.[sk] ?? 0) / opt.expPerSec;
+    }
+    return sec;
+  };
+  const bestAugAt = (f: string) => {
+    let best: { aug: string; v: number } | null = null;
+    for (const a of F[f]?.augs ?? []) {
+      if (a === NFG || owned.has(a) || !data.augs[a]) continue;
+      const v = value(a);
+      if (!best || v > best.v) best = { aug: a, v };
+    }
+    return best;
+  };
+  const addGate = (target: string, needs: Record<string, number>, v: number, afterSec: number) => {
+    if (!Object.keys(needs).length || v <= 0) return;
+    const studySec = studySecFor(needs);
+    skillGates.push({ target, needs, value: v, studySec, afterSec, score: v / Math.max(1, studySec + afterSec) });
+  };
+  if (cfg.skillWork) {
+    for (const f of Object.keys(F)) {
+      if (F[f].joined || F[f].invited || !usable(f) || unownedValue(f) <= 0) continue;
+      if (F[f].enemies.some((e) => member.has(e))) continue;
+      const r = evaluate(F[f].requirements, reqCtx);
+      if (r.met || !r.fixes) continue;
+      const best = bestAugAt(f);
+      if (!best) continue;
+      const after = estFactionRate > 0 ? data.augs[best.aug].repReq / estFactionRate : Infinity;
+      const skillFixes = r.fixes.filter((x): x is Extract<typeof x, { kind: "skill" }> => x.kind === "skill");
+      if (skillFixes.length && r.fixes.every((x) => x.kind === "skill" || x.kind === "travel" || x.kind === "backdoor"))
+        addGate(f, Object.fromEntries(skillFixes.map((x) => [x.skill, x.level])), best.v, after);
+      // a company job the player doesn't qualify for yet
+      for (const x of r.fixes) {
+        if (x.kind !== "company") continue;
+        const info = data.companies?.[x.company];
+        if (!info || info.repPerSec > 0 || !info.skillGate) continue;
+        const companyAfter = estFactionRate > 0 ? Math.max(0, x.rep - info.rep) / estFactionRate : Infinity;
+        addGate(`${x.company} job (for ${f})`, info.skillGate, best.v, companyAfter + after);
+      }
+    }
+    // the hacking level w0r1d_d43m0n needs, once The Red Pill is in
+    const wd = data.worldDaemon;
+    if (data.installed.includes(RED_PILL) && wd.exists && data.hackLevel < wd.reqHack)
+      addGate("w0r1d_d43m0n", { hacking: wd.reqHack }, cfg.destroyValue, 0);
+    skillGates.sort((a, b) => b.score - a.score);
+  }
+  const hackGates = skillGates.filter((g) => g.needs.hacking);
+  const hackXp: Plan["hackXp"] = hackGates.length
+    ? { level: Math.max(...hackGates.map((g) => g.needs.hacking)), why: hackGates[0].target }
+    : null;
+  let study: Plan["study"] = null;
+  const takeStudy = (why: string) => {
+    const g = skillGates.find((x) => Number.isFinite(x.studySec))!;
+    const skill = Object.keys(g.needs).find((sk) => (data.skills[sk] ?? 0) < g.needs[sk])!;
+    const opt = data.study![skill];
+    study = { university: opt.university, city: opt.city, course: opt.course, skill, focus: cfg.focus && !data.hasNeuroreceptor };
+    notes.push(`${why}: studying ${opt.course} for ${skill} ${g.needs[skill]} (${fmtS(g.studySec)}) → ${g.target}`);
+  };
+  const bestStudy = skillGates.find((x) => Number.isFinite(x.studySec)) ?? null;
   let company: Plan["company"] = null;
   let grindScore = 0;
   const takeCompany = (why: string) => {
@@ -404,7 +504,10 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     const grind = pending.filter((c) => c.repGap > 0 && c.donation === 0 && F[c.faction].bestWork && F[c.faction].joined);
     const target = grind.sort((a, b) => b.value / Math.max(1, b.repEta) - a.value / Math.max(1, a.repEta))[0];
     grindScore = target ? target.value / Math.max(1, target.repEta) : 0;
-    if (target && companyRoutes[0] && companyRoutes[0].score > grindScore * cfg.companyMargin) {
+    const companyScore = companyRoutes[0]?.score ?? 0;
+    if (target && bestStudy && bestStudy.score > Math.max(grindScore, companyScore) * cfg.companyMargin) {
+      takeStudy(`skill gate beats grinding ${target.faction}`);
+    } else if (target && companyRoutes[0] && companyRoutes[0].score > grindScore * cfg.companyMargin) {
       takeCompany(`company route beats grinding ${target.faction}`);
     } else if (target) {
       work = { faction: target.faction, type: F[target.faction].bestWork!, focus: cfg.focus && !data.hasNeuroreceptor };
@@ -416,7 +519,9 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
       const nfgFaction = bestNfgFaction(data, true, input.currentWork);
       const bb = input.bladeburner;
       const bbAugsLeft = (F[BLADEBURNERS]?.augs ?? ["?"]).some((a) => a !== NFG && !owned.has(a));
-      if (companyRoutes[0]) {
+      if (bestStudy && bestStudy.score > (companyRoutes[0]?.score ?? 0)) {
+        takeStudy(why);
+      } else if (companyRoutes[0]) {
         takeCompany(why);
       } else if (bb?.inDivision && !bb.simulacrum && bbAugsLeft) {
         bladeburner = true; // rank → Bladeburners rep, ahead of NeuroFlux and crime
@@ -512,6 +617,9 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     company,
     companyRoutes: companyRoutes.slice(0, 5),
     grindScore,
+    hackXp,
+    study,
+    skillGates: skillGates.slice(0, 8),
     train,
     worldDaemon: { redPill: data.installed.includes(RED_PILL), ...data.worldDaemon, hackLevel: data.hackLevel },
     infraSpend,
