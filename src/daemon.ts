@@ -292,7 +292,11 @@ async function factionsModule(
     return null;
   }
   const r = m.long.window >= 120_000 ? m.long : m.short;
-  const p = makePlan({ data, observedRep: r.rep, income: r.income, sinceInstall: m.sinceInstall }, cfg);
+  const work = s.work as { factionName?: string } | null;
+  const p = makePlan(
+    { data, observedRep: r.rep, income: r.income, sinceInstall: m.sinceInstall, currentWork: work?.factionName ?? null },
+    cfg,
+  );
 
   if (p.destroy) {
     event("destroy", "w0r1d_d43m0n is ready — destroying the BitNode");

@@ -1,7 +1,7 @@
 // Planner unit tests (run against the compiled output: `npm test`).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { plan, escalatedCost, purchaseOrder, augValue, DEFAULT_PLAN } from "../dist/lib/plan/factions.js";
+import { plan, escalatedCost, purchaseOrder, augValue, bestNfgFaction, DEFAULT_PLAN } from "../dist/lib/plan/factions.js";
 
 const fac = (o = {}) => ({
   joined: false, invited: false, rep: 0, favor: 0, favorGain: 0, enemies: [], workTypes: [],
@@ -155,4 +155,27 @@ test("favorFactions: joined workable factions nobody grinds, closest to donation
   const p = plan(input(w));
   assert.ok(!p.favorFactions.includes("CyberSec"), "CyberSec is a grind target, not a favor target");
   assert.deepEqual(p.favorFactions.filter((f) => ["A", "B", "C"].includes(f)), ["A", "B", "C"]);
+});
+
+test("NeuroFlux grind picks the fastest rep/s faction and doesn't hop on rep changes", () => {
+  const nfg = (rep, rate) =>
+    fac({ joined: true, rep, workTypes: ["security"], bestWork: "security", workRepPerSec: rate, augs: ["NeuroFlux Governor"] });
+  const data = (reps) =>
+    world({
+      factions: {
+        A: nfg(reps[0], 90), // >10% slower than C
+        B: nfg(reps[1], 105), // within 10% of the fastest, C
+        C: nfg(reps[2], 110),
+        D: fac({ joined: true, rep: 9e9, augs: ["NeuroFlux Governor"] }), // not workable
+      },
+    });
+  // fresh pick: fastest, not the one with the most rep
+  assert.equal(bestNfgFaction(data([3e6, 3.1e6, 2e6]), true), "C");
+  // rep leadership flipping back and forth (sleeves) never moves the player
+  for (const reps of [[3.5e6, 3.4e6, 3.3e6], [3.3e6, 3.5e6, 3.4e6], [3.4e6, 3.3e6, 3.5e6]])
+    assert.equal(bestNfgFaction(data(reps), true, "B"), "B");
+  // ...but a clearly faster faction (>10%) wins over the current one
+  assert.equal(bestNfgFaction(data([1, 1, 1]), true, "A"), "C");
+  // current faction no longer eligible → best
+  assert.equal(bestNfgFaction(data([1, 1, 1]), true, "D"), "C");
 });

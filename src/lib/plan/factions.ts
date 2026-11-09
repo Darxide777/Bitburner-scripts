@@ -11,7 +11,7 @@
 // Money is NOT spent on augs during a run: every purchase multiplies the price of
 // all remaining augs by ~1.9, so buying everything at install time, most
 // expensive first, is the cheapest order. The Red Pill is the exception.
-import type { FactionData } from "./data.js";
+import type { FactionData, FactionInfo } from "./data.js";
 import { NFG, RED_PILL, SKIP_FACTIONS } from "./data.js";
 import { evaluate, type ReqContext } from "./requirements.js";
 
@@ -135,6 +135,8 @@ export interface PlanInput {
   observedRep: Record<string, number>;
   income: number; // $/s
   sinceInstall: number; // ms
+  /** Faction the player is working for right now, if any (keeps the NeuroFlux grind from hopping). */
+  currentWork?: string | null;
 }
 
 export function augValue(stats: Record<string, number>, weights: Record<string, number>): number {
@@ -282,7 +284,7 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
       // nothing the player can grind: build rep for NeuroFlux in the best faction, else crime (karma for the gang)
       const gangGated = pending.filter((c) => c.repGap > 0 && c.faction === data.gangFaction).length;
       const why = gangGated ? `${gangGated} augs wait on ${data.gangFaction} (gang respect)` : "no rep-gated augs left";
-      const nfgFaction = bestNfgFaction(data, true);
+      const nfgFaction = bestNfgFaction(data, true, input.currentWork);
       if (nfgFaction) {
         work = { faction: nfgFaction, type: F[nfgFaction].bestWork!, focus: cfg.focus && !data.hasNeuroreceptor };
         notes.push(`${why}; building ${nfgFaction} rep for NeuroFlux`);
@@ -414,14 +416,28 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
   };
 }
 
-/** Joined faction with the most rep that sells NeuroFlux Governor (optionally: one we can work for). */
-export function bestNfgFaction(data: FactionData, workableOnly = false): string | null {
-  let best: string | null = null;
-  for (const [f, fi] of Object.entries(data.factions)) {
-    if (!fi.joined || !fi.augs.includes(NFG)) continue;
-    if (workableOnly && !fi.bestWork) continue;
-    if (!best || fi.rep > data.factions[best].rep) best = f;
-  }
+/** Another faction must be this much faster before the NeuroFlux grind switches to it. */
+const NFG_SWITCH_MARGIN = 1.1;
+
+/**
+ * Joined faction selling NeuroFlux Governor to build rep in (optionally: one we can work for).
+ *
+ * NeuroFlux costs the same rep everywhere, so the best place is where work earns rep
+ * fastest: highest workRepPerSec, which includes favor and is stable within a run.
+ * (Ranking by current rep made it hop every tick: sleeves grind every faction except
+ * the player's, so the one the player left would soon be overtaken by the others.)
+ * `current` is kept unless another faction is NFG_SWITCH_MARGIN× faster.
+ */
+export function bestNfgFaction(data: FactionData, workableOnly = false, current?: string | null): string | null {
+  const ok = Object.entries(data.factions).filter(
+    ([, fi]) => fi.joined && fi.augs.includes(NFG) && (!workableOnly || fi.bestWork),
+  );
+  if (!ok.length) return null;
+  const rate = (fi: FactionInfo) => fi.workRepPerSec;
+  ok.sort(([, a], [, b]) => rate(b) - rate(a) || b.favor - a.favor || b.rep - a.rep);
+  const [best, bestInfo] = ok[0];
+  const cur = current ? ok.find(([f]) => f === current) : undefined;
+  if (cur && rate(cur[1]) * NFG_SWITCH_MARGIN >= rate(bestInfo)) return cur[0];
   return best;
 }
 
