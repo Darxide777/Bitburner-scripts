@@ -17,6 +17,7 @@ export const DATA = {
 
 export const SCRIPTS = {
   daemon: "daemon.js",
+  restart: "tasks/restart.js",
   hackManager: "hack/manager.js",
   gangManager: "gang/manager.js",
   casino: "casino.js", // launcher (small)
@@ -27,6 +28,9 @@ export const SCRIPTS = {
   weaken: "hack/w/w.js",
   share: "hack/w/s.js",
 } as const;
+
+/** Hash of the current build, written by tools/sync.mjs; daemon.js restarts when it changes. */
+export const BUILD_MARKER = "build.txt";
 
 export const TASK_DIR = "tmp/task";
 

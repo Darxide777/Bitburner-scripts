@@ -27,6 +27,8 @@ While connected, the sync server also:
 
 - refreshes `types/NetscriptDefinitions.d.ts` from the running game, so the types match your game version
 - pulls telemetry (`data/*.txt` on home) into `./logs/` every minute for offline analysis
+- writes a build hash to `build.txt` on home once a build has settled; `daemon.js` notices the
+  change and restarts itself and the hack/gang/Go managers on the new code (`tasks/restart.js`)
 
 Other commands: `npm run build`, `npm run typecheck`, `npm test` (planner unit tests),
 `npm run sync` (sync without the tsc watcher), and

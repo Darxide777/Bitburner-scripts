@@ -14,7 +14,7 @@ import { dur, money, num, pad, ram } from "./lib/fmt.js";
 import { appendJsonl, readJson, writeJson } from "./lib/io.js";
 import { MetricsTracker, type Metrics } from "./lib/metrics.js";
 import { allHosts, portOpenerCount, rootAll } from "./lib/net.js";
-import { DATA, GANG_KARMA, SCRIPTS } from "./lib/paths.js";
+import { BUILD_MARKER, DATA, GANG_KARMA, SCRIPTS } from "./lib/paths.js";
 import { call } from "./lib/call.js";
 import { collectFactionData } from "./lib/plan/collect.js";
 import { NFG, type FactionData } from "./lib/plan/data.js";
@@ -92,8 +92,15 @@ export async function main(ns: NS): Promise<void> {
   };
 
   event("start", "daemon started");
+  const build = ns.read(BUILD_MARKER);
 
   while (true) {
+    // ---- new build pushed by tools/sync.mjs → restart on it ----
+    const nextBuild = ns.read(BUILD_MARKER);
+    if (nextBuild !== build && spawnTask(ns, SCRIPTS.restart)) {
+      event("start", `new build ${nextBuild}: restarting`);
+      return;
+    }
     const cfg: DaemonConfig = { ...DEFAULTS, ...readJson<Partial<DaemonConfig>>(ns, DATA.config, {}) };
 
     // ---- root ----

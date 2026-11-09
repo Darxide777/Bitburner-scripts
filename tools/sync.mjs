@@ -17,6 +17,7 @@ import { WebSocketServer } from "ws";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
+import { createHash } from "node:crypto";
 import { exportAll } from "./fix-defs.mjs";
 
 const args = process.argv.slice(2);
@@ -105,6 +106,26 @@ const STALE_CHECKS = 5;
 const missing = new Map(); // game path -> consecutive passes absent from dist/
 let reconciling = false;
 
+// Build marker: a hash of every pushed file, written to BUILD_MARKER on home once the
+// build has been stable for two passes (tsc --watch writes files one at a time).
+// daemon.js polls it and restarts itself and the managers when it changes.
+const BUILD_MARKER = "build.txt";
+let candidateHash = "";
+let markedHash = "";
+async function markBuild(files) {
+  const h = createHash("sha1");
+  for (const f of [...files].sort()) h.update(gamePath(f)).update("\0").update(readFileSync(f)).update("\0");
+  const hash = h.digest("hex").slice(0, 12);
+  if (hash !== candidateHash) {
+    candidateHash = hash; // wait one more pass to be sure tsc is done
+    return;
+  }
+  if (hash === markedHash) return;
+  await rpc("pushFile", { server: "home", filename: BUILD_MARKER, content: hash });
+  markedHash = hash;
+  log("build", hash);
+}
+
 async function reconcile() {
   if (!socket || reconciling) return;
   reconciling = true;
@@ -116,6 +137,7 @@ async function reconcile() {
       if (!remote.has(gamePath(f))) lastPushed.delete(gamePath(f));
       await push(f);
     }
+    await markBuild(files);
     const ours = new Set(files.map(gamePath));
     for (const f of ours) missing.delete(f);
     const stale = [...manifest].filter((f) => !ours.has(f));
