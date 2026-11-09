@@ -390,11 +390,16 @@ function noteMilestones(ns: NS, data: FactionData, s: Snapshot, event: (k: strin
 
 /** Per-minute snapshot of every subsystem (from their status files) for data/metrics.txt. */
 function systemsLine(ns: NS) {
-  const bb = readJson<{ inDivision?: boolean; rank?: number; rankPerSec?: number; finalEtaSec?: number | null }>(ns, DATA.bladeburner, {});
-  const gang = readJson<{ respect?: number; territory?: number; members?: number; mode?: string; installFactor?: number }>(ns, DATA.gang, {});
-  const corp = readJson<{ exists?: boolean; funds?: number; revenue?: number; expenses?: number; public?: boolean }>(ns, DATA.corp, {});
-  const stocks = readJson<{ mode?: string; value?: number; realized?: number; pre?: { edge?: number } }>(ns, DATA.stocks, {});
-  const hn = readJson<{ servers?: number; production?: number }>(ns, DATA.hacknet, {});
+  // status files survive resets: only trust ones written recently (a stopped manager's is stale)
+  const recent = <T extends { t?: number }>(file: string): Partial<T> => {
+    const x = readJson<Partial<T>>(ns, file, {});
+    return x.t && Date.now() - x.t < 5 * 60_000 ? x : {};
+  };
+  const bb = recent<{ t: number; inDivision: boolean; rank: number; rankPerSec: number; finalEtaSec: number | null }>(DATA.bladeburner);
+  const gang = recent<{ t: number; respect: number; territory: number; members: number; mode: string; installFactor: number }>(DATA.gang);
+  const corp = recent<{ t: number; exists: boolean; funds: number; revenue: number; expenses: number; public: boolean }>(DATA.corp);
+  const stocks = recent<{ t: number; mode: string; value: number; realized: number; pre: { edge?: number } }>(DATA.stocks);
+  const hn = recent<{ t: number; servers: number; production: number }>(DATA.hacknet);
   return {
     bladeburner: bb.inDivision ? { rank: bb.rank, rankPerSec: bb.rankPerSec, finalEtaSec: bb.finalEtaSec } : null,
     gang: gang.members ? { respect: gang.respect, territory: gang.territory, members: gang.members, mode: gang.mode, installFactor: gang.installFactor } : null,
