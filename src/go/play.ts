@@ -43,6 +43,8 @@ export async function main(ns: NS): Promise<void> {
   const unavailable = new Set<string>();
   /** null = not checked yet; false = no SF14.2 */
   let cheatsAvailable: boolean | null = null;
+  /** last cheat check, for the status file: why cheats are (not) being played */
+  let cheatCheck = { available: null as boolean | null, chance: 0, evaluated: 0, last: "" };
 
   while (true) {
     const cfg: GoConfig = { ...DEFAULT_GO, ...readJson<Partial<GoConfig>>(ns, DATA.goConfig, {}) };
@@ -100,9 +102,16 @@ export async function main(ns: NS): Promise<void> {
       if (cfg.cheats && cheatsAvailable !== false && res.move !== PASS) {
         const p = await call<number>(ns, "go.cheat.getCheatSuccessChance");
         cheatsAvailable = p !== undefined;
+        cheatCheck.available = cheatsAvailable;
+        cheatCheck.chance = p ?? 0;
+        if (p === undefined) cheatCheck.last = "no SF14.2 (getCheatSuccessChance unavailable)";
+        else if (p < cfg.cheatMinChance) cheatCheck.last = `chance ${(p * 100).toFixed(0)}% < ${cfg.cheatMinChance * 100}%`;
+        else if (res.winRate > cfg.cheatMaxWinRate) cheatCheck.last = `already winning (${res.winRate.toFixed(2)})`;
         if (p !== undefined && p >= cfg.cheatMinChance && res.winRate <= cfg.cheatMaxWinRate) {
           const prior = (await call<number>(ns, "go.cheat.getCheatCount")) ?? 0;
           const pick = await evaluateCheats(ns, board, size, state.komi, history, res.move, res.winRate, thinkMs, p, prior, cfg);
+          cheatCheck.evaluated++;
+          cheatCheck.last = pick ? `played ${pick.kind} (EV ${pick.ev.toFixed(2)} vs ${res.winRate.toFixed(2)})` : `evaluated: no cheat beats ${res.winRate.toFixed(2)} by ${cfg.cheatMargin}`;
           if (pick) {
             const xy = (i: number) => [Math.floor(i / size), i % size];
             const rr =
@@ -156,6 +165,7 @@ export async function main(ns: NS): Promise<void> {
       last: { opponent, size, won, score: `${end.blackScore}–${end.whiteScore}`, gainPct: gain, ms },
       games: st.games,
       cheats: st.cheats ?? null,
+      cheatCheck,
       rotation: cfg.rotateMs > 0 ? { ...st.rot, endsIn: st.rot ? Math.max(0, st.rot.since + cfg.rotateMs - Date.now()) : 0 } : null,
       arms: st.arms,
       bonuses: Object.fromEntries(
