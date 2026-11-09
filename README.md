@@ -85,7 +85,8 @@ collects faction/aug state and the planner decides:
 - *travel / backdoor*: when a wanted faction is missing only a city or a backdoor, go get it.
 - *buy*: nothing during a run. Each purchase multiplies remaining prices by 1.9 (×SF11
   discount), so everything is bought at install time, most expensive first (prereqs first).
-  Where favor allows, donations cover rep gaps. The Red Pill is bought immediately.
+  Where favor allows, donations cover rep gaps (never at factions without work, e.g.
+  Bladeburners and Church of the Machine God, which refuse them). The Red Pill is bought immediately.
 - *install*: when the next valuable aug is further away than `installPatience` × the time
   since the last install (with at least `minAugsToInstall` new augs), when the run exceeds
   `maxRunMs`, or when installing would unlock donations at a faction with augs left. Leftover
@@ -179,8 +180,12 @@ product of the powers of every booster touching it. Consequences:
     ×1.4 after an hour, ×1.75 after a day. Early in a node, home is most of the RAM, so it only
     peak-charges; later one cloud server becomes the dedicated charger (moved when a block ≥1.5×
     appears). `"stanek": {"continuous": false}` restores peak-only.
+  - *Church mode*: Church of the Machine God rep comes only from charging (~threads^0.95 per
+    call), so while its augs (Stanek's Gift - Awakening, Serenity) are rep-gated, extra
+    continuous chargers run on more cloud servers, up to `churchPoolShare` (35%) of all RAM.
+    The planner values those augs +3 above their listed stats (`plan.augBonus`).
   RAM is reclaimed from hacking by raising the home reserve or telling the hacking manager to
-  skip the charger's server. After 5 minutes it starts with whatever ≥25% is free. Status
+  skip the chargers' servers. After 5 minutes it starts with whatever ≥25% is free. Status
   shows each fragment's highestCharge and numCharge.
 - **Acceptance**: the gift can only be accepted before any non-NeuroFlux aug, so the daemon
   accepts it at BitNode start, before anything can buy augs.

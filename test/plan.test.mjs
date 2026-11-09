@@ -230,3 +230,17 @@ test("Bladeburner first: train combat stats one at a time before grinding, only 
   assert.equal(plan(input(w, { bladeburner: { inDivision: true, simulacrum: true, canJoin: true } })).train, null);
   assert.equal(plan(input(w, { bladeburner: { inDivision: false, simulacrum: false, canJoin: true } }), { ...DEFAULT_PLAN, bladeburnerFirst: false }).train, null);
 });
+
+test("Church of the Machine God: no donations (it offers no work); its augs get the configured bonus", () => {
+  const w = world({ money: 1e15 });
+  w.factions["Church of the Machine God"] = fac({ joined: true, favor: 500, augs: ["Stanek's Gift - Awakening"] });
+  w.augs["Stanek's Gift - Awakening"] = aug({ repReq: 1.6e6, price: 0, factions: ["Church of the Machine God"], stats: { hacking: 1.01 } });
+  const p = plan(input(w));
+  const c = [...p.ready, ...p.pending].find((x) => x.aug === "Stanek's Gift - Awakening");
+  assert.ok(c);
+  assert.equal(c.donation, 0, "never planned as a donation");
+  const plain = plan(input(w), { ...DEFAULT_PLAN, augBonus: {} });
+  const c0 = [...plain.ready, ...plain.pending].find((x) => x.aug === "Stanek's Gift - Awakening");
+  assert.ok(c.value > c0.value + 2.9, `${c.value} vs ${c0.value}`);
+  assert.ok((p.repGated["Church of the Machine God"] ?? 0) > 0, "rep-gated → the daemon adds chargers");
+});

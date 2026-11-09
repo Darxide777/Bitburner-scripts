@@ -39,6 +39,12 @@ export interface StanekConfig {
   continuous: boolean;
   /** largest share of the total RAM pool a continuous charger may hold */
   maxPoolShare: number;
+  /**
+   * While Church of the Machine God augs are rep-gated: extra continuous chargers on more
+   * cloud servers, up to this share of all RAM (main charger included). Church rep only
+   * comes from charging, ~threads^0.95 per call, so total charging threads is what counts.
+   */
+  churchPoolShare: number;
   /** Re-layout only if the solved layout is at least this much better. */
   relayoutGain: number;
   weights: Record<number, number>;
@@ -49,6 +55,7 @@ export const DEFAULT_STANEK: StanekConfig = {
   rounds: 5,
   continuous: true,
   maxPoolShare: 0.25,
+  churchPoolShare: 0.35,
   relayoutGain: 1.03,
   weights: DEFAULT_STANEK_WEIGHTS,
 };
@@ -84,8 +91,10 @@ export interface StanekStatus {
   bonus: Record<string, number>;
   /** extra home RAM the daemon should hold back so the charger can start */
   reserveGB: number;
-  /** non-home server the hacking manager must leave free for the charger */
-  reserveHost: string | null;
+  /** non-home servers the hacking manager must leave free for chargers */
+  reserveHosts: string[];
+  /** extra chargers (Church rep mode): hosts running or waiting for one */
+  extraChargers: string[];
   /** where the charger runs, its mode and effective threads */
   charger: { host: string; mode: "peak" | "continuous"; threads: number } | null;
   /** per chargeable fragment: highestCharge and numCharge (to watch them grow) */
@@ -107,6 +116,8 @@ export async function manageStanek(
   event: (k: string, m: string, d?: unknown) => void,
   /** home RAM the daemon's own tasks need; the charger never takes it (small homes early in a node) */
   keepFreeGB = 0,
+  /** Church of the Machine God augs are rep-gated: add extra chargers (churchPoolShare) */
+  churchRep = false,
 ): Promise<StanekStatus> {
   const status: StanekStatus = {
     state: "accepted",
@@ -119,7 +130,8 @@ export async function manageStanek(
     waitingForRam: false,
     bonus: {},
     reserveGB: 0,
-    reserveHost: null,
+    reserveHosts: [],
+    extraChargers: [],
     charger: null,
     charges: [],
   };
@@ -221,12 +233,42 @@ export async function manageStanek(
   // what's running now (the daemon may have restarted: look, don't trust memory)
   let running: { host: string; pid: number; threads: number; mode: string } | null = null;
   for (const b of blocks) {
-    const p = ns.ps(b.host).find((x) => x.filename === CHARGER);
+    const p = ns.ps(b.host).find((x) => x.filename === CHARGER && x.args[2] !== "extra");
     if (p) {
       running = { host: b.host, pid: p.pid, threads: p.threads * b.mult, mode: Number(p.args[0]) > 0 ? "peak" : "continuous" };
       break;
     }
   }
+
+  // ---- extra chargers (Church rep) ----
+  const roots = stats.map((f) => [f.x, f.y]);
+  const extras = blocks.flatMap((b) =>
+    ns.ps(b.host).filter((x) => x.filename === CHARGER && x.args[2] === "extra").map((x) => ({ host: b.host, pid: x.pid, gb: x.threads * ramPer })),
+  );
+  if (!churchRep || !cfg.continuous || needPeak) {
+    // a peak charge needs everything quiet; outside Church mode they only cost hacking
+    for (const x of extras) ns.kill(x.pid);
+    if (extras.length) event("stanek", `stopped ${extras.length} extra charger(s)${needPeak ? " for a peak charge" : ""}`);
+  } else {
+    const mainHosts = new Set([running?.host, want?.host].filter(Boolean));
+    let used = extras.reduce((a, x) => a + x.gb, 0) + (want ? want.threads * ramPer : 0);
+    status.extraChargers = extras.map((x) => x.host);
+    const busy = new Set(extras.map((x) => x.host));
+    for (const b of blocks) {
+      if (b.host === "home" || mainHosts.has(b.host) || busy.has(b.host)) continue;
+      const gb = ns.getServerMaxRam(b.host);
+      if (used + gb > pool * cfg.churchPoolShare) continue;
+      used += gb;
+      status.extraChargers.push(b.host);
+      const fit = Math.floor((gb - ns.getServerUsedRam(b.host)) / ramPer);
+      if (fit < b.threads * 0.98) continue; // reserved below; starts once hacking has left
+      ns.scp(CHARGER, b.host, "home");
+      if (ns.exec(CHARGER, b.host, { threads: fit }, 0, JSON.stringify(roots), "extra"))
+        event("stanek", `extra charger for Church rep on ${b.host} (${fit} threads)`);
+    }
+  }
+  status.reserveHosts.push(...status.extraChargers);
+
   if (running) {
     const keep =
       running.mode === "peak" || // finish it (25 s)
@@ -234,7 +276,7 @@ export async function manageStanek(
     if (keep) {
       status.charging = true;
       status.charger = { host: running.host, mode: running.mode as "peak" | "continuous", threads: running.threads };
-      if (running.host !== "home") status.reserveHost = running.host;
+      if (running.host !== "home") status.reserveHosts.push(running.host);
       return status;
     }
     ns.kill(running.pid);
@@ -253,20 +295,19 @@ export async function manageStanek(
   const waited = Date.now() - cache.waitingSince;
   if (fit >= want.threads * 0.98 || (waited > 5 * 60_000 && fit >= want.threads * 0.25)) {
     const threads = Math.min(want.threads, fit);
-    const roots = stats.map((f) => [f.x, f.y]);
     if (want.host !== "home") ns.scp(CHARGER, want.host, "home");
     const rounds = want.mode === "peak" ? cfg.rounds : 0; // 0 = forever
     if (ns.exec(CHARGER, want.host, { threads }, rounds, JSON.stringify(roots))) {
       event("stanek", `${want.mode} charging ${roots.length} fragment(s) on ${want.host} with ${threads} threads${want.mode === "peak" ? ` ×${rounds}` : ""}`);
       status.charging = true;
       status.charger = { host: want.host, mode: want.mode, threads: threads * want.mult };
-      if (want.host !== "home") status.reserveHost = want.host;
+      if (want.host !== "home") status.reserveHosts.push(want.host);
       cache.waitingSince = 0;
       return status;
     }
   }
   status.waitingForRam = true;
   if (want.host === "home") status.reserveGB = want.threads * ramPer;
-  else status.reserveHost = want.host;
+  else status.reserveHosts.push(want.host);
   return status;
 }

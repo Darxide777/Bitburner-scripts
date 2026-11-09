@@ -189,7 +189,7 @@ export async function main(ns: NS): Promise<void> {
       homeReserve: reserve,
       // lend spare RAM to factions while we are working for one
       share: s?.work?.type === "FACTION" ? 1 : 0,
-      skipHosts: stanekStatus?.reserveHost ? [stanekStatus.reserveHost] : [],
+      skipHosts: stanekStatus?.reserveHosts ?? [],
     };
     writeJson(ns, DATA.hackConfig, hackCfg);
     if (!ns.isRunning(SCRIPTS.hackManager, "home")) {
@@ -317,6 +317,7 @@ async function gangModule(ns: NS, data: FactionData, p: Plan, dcfg: DaemonConfig
 }
 
 const SIMULACRUM = "The Blade's Simulacrum";
+const CHURCH = "Church of the Machine God";
 const GENESIS = "Stanek's Gift - Genesis";
 /** set while the Bladeburner manager should run, so the hacking manager leaves home RAM for it */
 let bladeburnerWanted = false;
@@ -444,7 +445,9 @@ async function factionsModule(
 
   // Stanek before anything can buy an aug: the gift can only be accepted with no augs
   try {
-    stanekStatus = await manageStanek(ns, data, s.homeCores, { ...DEFAULT_STANEK, ...dcfg.stanek }, event, homeReserve(ns));
+    stanekStatus = await manageStanek(ns, data, s.homeCores, { ...DEFAULT_STANEK, ...dcfg.stanek }, event, homeReserve(ns),
+      (p.repGated[CHURCH] ?? 0) > 0, // Church augs still need rep → extra chargers
+    );
   } catch (e) {
     event("error", `stanek failed: ${e instanceof Error ? e.message : String(e)}`);
   }

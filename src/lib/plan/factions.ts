@@ -36,6 +36,8 @@ export interface PlanConfig {
   focus: boolean;
   /** Train combat to 100 and join Bladeburner before grinding factions (it can win the BitNode). */
   bladeburnerFirst: boolean;
+  /** Extra value per aug on top of its stats (effects the stats don't show). */
+  augBonus: Record<string, number>;
   weights: Record<string, number>;
 }
 
@@ -50,6 +52,8 @@ export const DEFAULT_PLAN: PlanConfig = {
   manageWork: true,
   focus: true,
   bladeburnerFirst: true,
+  // Church of the Machine God augs, wanted for the Stanek path: valued above their listed stats
+  augBonus: { "Stanek's Gift - Awakening": 3, "Stanek's Gift - Serenity": 3 },
   // value of +100% in each multiplier (cost multipliers count as reductions)
   weights: {
     faction_rep: 4,
@@ -192,7 +196,8 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
   const owned = new Set([...data.installed, ...data.queued]);
   const F = data.factions;
   const usable = (f: string) => !SKIP_FACTIONS.includes(f);
-  const value = (a: string) => (a === RED_PILL ? 1e6 : augValue(data.augs[a].stats, cfg.weights));
+  const value = (a: string) =>
+    a === RED_PILL ? 1e6 : augValue(data.augs[a].stats, cfg.weights) + (cfg.augBonus[a] ?? 0);
 
   // ---------- which factions can we buy from ----------
   const joined = Object.keys(F).filter((f) => F[f].joined);
@@ -220,9 +225,14 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     const base = F[f].workRepPerSec * (cfg.focus || data.hasNeuroreceptor ? 1 : UNFOCUSED);
     return Math.max(base, input.observedRep[f] ?? 0);
   };
-  // Bladeburners rep only comes from rank; the game refuses donations there
+  // factions that offer no work refuse donations (Bladeburners: rank only; Church of the
+  // Machine God: Stanek charging only)
   const canDonate = (f: string) =>
-    F[f].favor >= data.favorToDonate && data.repPerDollar > 0 && f !== data.gangFaction && f !== BLADEBURNERS;
+    F[f].favor >= data.favorToDonate &&
+    data.repPerDollar > 0 &&
+    f !== data.gangFaction &&
+    f !== BLADEBURNERS &&
+    F[f].workTypes.length > 0;
 
   const candidates: Candidate[] = [];
   for (const [a, info] of Object.entries(data.augs)) {
