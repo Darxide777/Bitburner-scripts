@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Board, BLACK, WHITE, EMPTY, parse, toCols, key, legalMoves } from "../dist/lib/go/engine.js";
 import { search, PASS } from "../dist/lib/go/mcts.js";
-import { chooseArm, record, armKey, armValue, rotateArm, DEFAULT_GO } from "../dist/lib/plan/go.js";
+import { chooseArm, record, armKey, armValue, rotateArm, chooseCheat, cheatEV, DEFAULT_GO } from "../dist/lib/plan/go.js";
 
 // boards are column strings like the game: cols[x][y]
 const at = (N, x, y) => x * N + y;
@@ -115,4 +115,22 @@ test("rotation picks the board size from that opponent's own arms", () => {
   assert.equal(rotateArm(arms, ["A"], cfg, null, 0).size, 7);
   record(arms, armKey("A", 7), true, 0.2, 12000, "", 1); // 1.0/min vs 0.1/min
   assert.equal(rotateArm(arms, ["A"], { ...cfg, explore: 0 }, null, 0).size, 7);
+});
+
+test("cheats: only when the expected value beats the normal move", () => {
+  const two = { kind: "twoMoves", cells: [1, 2], value: 0.9 };
+  assert.equal(cheatEV(0.6, 0, 0.9, 0.3), 0.6 * 0.9 + 0.4 * 0.3);
+  // first attempt: no ejection risk. 0.6·0.9 + 0.4·0.3 = 0.66 > 0.5 + 0.03
+  assert.equal(chooseCheat([two], 0.6, 0, 0.5, 0.3)?.kind, "twoMoves");
+  // later attempts: 10% ejection on failure lowers EV: 0.54 + 0.4·0.9·0.3 = 0.648, still > 0.53
+  assert.ok(Math.abs(chooseCheat([two], 0.6, 2, 0.5, 0.3).ev - 0.648) < 1e-12);
+  // a near-sure normal move isn't gambled; low chances aren't considered
+  assert.equal(chooseCheat([two], 0.9, 0, 0.97, 0.9), null);
+  assert.equal(chooseCheat([two], 0.2, 0, 0.1, 0.05), null);
+  // not enough gain over the normal move
+  assert.equal(chooseCheat([{ ...two, value: 0.55 }], 0.6, 0, 0.5, 0.3), null);
+  // picks the better of several
+  const rm = { kind: "removeRouter", cells: [5], value: 0.95 };
+  assert.equal(chooseCheat([two, rm], 0.6, 0, 0.5, 0.3).kind, "removeRouter");
+  assert.equal(chooseCheat([two], 0.6, 0, 0.5, 0.3, { ...DEFAULT_GO, cheats: false }), null);
 });

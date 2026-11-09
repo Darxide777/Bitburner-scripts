@@ -2,11 +2,23 @@
 // board size that raise the most valuable bonus fastest (lib/plan/go.ts).
 // Steered by data/go-config.txt; status in data/go.txt.
 import type { GoOpponent, NS } from "@ns";
-import { Board, key, parse } from "../lib/go/engine.js";
+import { BLACK, Board, EMPTY, key, parse, WHITE } from "../lib/go/engine.js";
+import { call } from "../lib/call.js";
 import { PASS, search } from "../lib/go/mcts.js";
 import { readJson, writeJson } from "../lib/io.js";
 import { DATA } from "../lib/paths.js";
-import { armKey, chooseArm, DEFAULT_GO, record, rotateArm, type ArmStats, type GoConfig, type Rotation } from "../lib/plan/go.js";
+import {
+  armKey,
+  chooseArm,
+  chooseCheat,
+  DEFAULT_GO,
+  record,
+  rotateArm,
+  type ArmStats,
+  type CheatOption,
+  type GoConfig,
+  type Rotation,
+} from "../lib/plan/go.js";
 
 interface GoState {
   arms: Record<string, ArmStats>;
@@ -15,6 +27,8 @@ interface GoState {
   games: number;
   /** rotation mode: current opponent's turn */
   rot?: Rotation | null;
+  /** cheats: attempts, successes, ejections, and the summed predicted chance (to check it) */
+  cheats?: { attempts: number; successes: number; ejections: number; predicted: number };
 }
 
 const ARMS_FILE = "data/go-arms.txt";
@@ -27,6 +41,8 @@ export async function main(ns: NS): Promise<void> {
   // after an install every bonus restarts from zero: old gain estimates are stale
   if (st.resetMark !== resetMark) st = { arms: {}, resetMark, games: 0 };
   const unavailable = new Set<string>();
+  /** null = not checked yet; false = no SF14.2 */
+  let cheatsAvailable: boolean | null = null;
 
   while (true) {
     const cfg: GoConfig = { ...DEFAULT_GO, ...readJson<Partial<GoConfig>>(ns, DATA.goConfig, {}) };
@@ -80,6 +96,37 @@ export async function main(ns: NS): Promise<void> {
         opponentPassed,
         yieldFn: () => ns.sleep(0),
       });
+      // ---- cheat, if its expected value beats the normal move ----
+      if (cfg.cheats && cheatsAvailable !== false && res.move !== PASS) {
+        const p = await call<number>(ns, "go.cheat.getCheatSuccessChance");
+        cheatsAvailable = p !== undefined;
+        if (p !== undefined && p >= cfg.cheatMinChance && res.winRate <= cfg.cheatMaxWinRate) {
+          const prior = (await call<number>(ns, "go.cheat.getCheatCount")) ?? 0;
+          const pick = await evaluateCheats(ns, board, size, state.komi, history, res.move, res.winRate, thinkMs, p, prior, cfg);
+          if (pick) {
+            const xy = (i: number) => [Math.floor(i / size), i % size];
+            const rr =
+              pick.kind === "twoMoves"
+                ? await call<{ type: "move" | "pass" | "gameOver" }>(ns, "go.cheat.playTwoMoves", ...xy(pick.cells[0]), ...xy(pick.cells[1]))
+                : await call<{ type: "move" | "pass" | "gameOver" }>(ns, "go.cheat.removeRouter", ...xy(pick.cells[0]));
+            const now = parse(go.getBoardState());
+            const ok = pick.kind === "twoMoves" ? pick.cells.every((i) => now[i] === BLACK) : now[pick.cells[0]] !== WHITE;
+            const c = (st.cheats ??= { attempts: 0, successes: 0, ejections: 0, predicted: 0 });
+            c.attempts++;
+            c.predicted += p;
+            if (ok) c.successes++;
+            else if (rr?.type === "gameOver") c.ejections++;
+            ns.print(`cheat ${pick.kind} (p ${(p * 100).toFixed(0)}%, EV ${pick.ev.toFixed(2)} vs ${res.winRate.toFixed(2)}): ${ok ? "ok" : "failed"}`);
+            if (rr) {
+              if (rr.type === "gameOver") break;
+              opponentPassed = rr.type === "pass";
+              continue;
+            }
+            // the proxy threw (move rejected?): fall through to a normal move this turn
+          }
+        }
+      }
+
       let r: { type: "move" | "pass" | "gameOver" };
       try {
         r =
@@ -108,6 +155,7 @@ export async function main(ns: NS): Promise<void> {
       t: Date.now(),
       last: { opponent, size, won, score: `${end.blackScore}–${end.whiteScore}`, gainPct: gain, ms },
       games: st.games,
+      cheats: st.cheats ?? null,
       rotation: cfg.rotateMs > 0 ? { ...st.rot, endsIn: st.rot ? Math.max(0, st.rot.since + cfg.rotateMs - Date.now()) : 0 } : null,
       arms: st.arms,
       bonuses: Object.fromEntries(
@@ -116,4 +164,51 @@ export async function main(ns: NS): Promise<void> {
     });
     ns.print(`${won ? "WIN " : "loss"} vs ${opponent} ${size}x${size}  ${end.blackScore}–${end.whiteScore}  +${gain.toFixed(2)}pp  ${(ms / 1000).toFixed(0)}s`);
   }
+}
+
+/** Swap colors so the search (which always plays black) evaluates the opponent's turn. */
+function swapColors(b: Board): Board {
+  return new Board(b.N, Int8Array.from(b.cells, (v) => (v === BLACK ? WHITE : v === WHITE ? BLACK : v)));
+}
+
+/**
+ * Value each cheat with our own search and pick one if its EV beats the normal move
+ * (lib/plan/go.ts chooseCheat). Each evaluation gets half the normal thinking time.
+ */
+async function evaluateCheats(
+  ns: NS,
+  board: Board,
+  size: number,
+  komi: number,
+  history: Set<string>,
+  bestMove: number,
+  vNormal: number,
+  thinkMs: number,
+  p: number,
+  prior: number,
+  cfg: GoConfig,
+): Promise<(CheatOption & { ev: number }) | null> {
+  const t = Math.max(50, thinkMs / 2);
+  const yieldFn = () => ns.sleep(0);
+  // the opponent to move = our turn skipped (a failed cheat): 1 − their win rate
+  const opp = async (b: Board) => 1 - (await search(swapColors(b), { komi: -komi, timeMs: t, yieldFn })).winRate;
+  const vSkip = await opp(board);
+  const options: CheatOption[] = [];
+  // two moves: our best move, then our best reply to our own position
+  const b1 = board.clone();
+  b1.play(bestMove, BLACK);
+  const r2 = await search(b1, { komi, timeMs: t, history, yieldFn });
+  if (r2.move !== PASS) options.push({ kind: "twoMoves", cells: [bestMove, r2.move], value: r2.winRate });
+  // remove a router: one stone from each of up to 3 short-of-liberty enemy chains
+  const seen = new Set<number>();
+  for (let i = 0; i < size * size && options.length < 4; i++) {
+    if (board.cells[i] !== WHITE || seen.has(i)) continue;
+    const libs = board.chain(i);
+    for (let k = 0; k < board.chainLen; k++) seen.add(board.chainStones[k]);
+    if (libs > 2) continue;
+    const b2 = board.clone();
+    b2.cells[i] = EMPTY;
+    options.push({ kind: "removeRouter", cells: [i], value: await opp(b2) });
+  }
+  return chooseCheat(options, p, prior, vNormal, vSkip, cfg);
 }

@@ -23,6 +23,16 @@ export interface GoConfig {
   alpha: number;
   /** Turn length per opponent in rotation mode; 0 = always play the best-value arm. */
   rotateMs: number;
+  /** SF14.2 cheats when their expected value beats the normal move (see chooseCheat). */
+  cheats: boolean;
+  /** don't even evaluate cheats below this success chance */
+  cheatMinChance: number;
+  /** a cheat must beat the normal move's win probability by this much */
+  cheatMargin: number;
+  /** ejection chance on a failed cheat after the first attempt (the docs: ~10%) */
+  ejectChance: number;
+  /** no cheating once the normal move already wins this surely */
+  cheatMaxWinRate: number;
 }
 
 export const DEFAULT_GO: GoConfig = {
@@ -41,7 +51,50 @@ export const DEFAULT_GO: GoConfig = {
   explore: 0.3,
   alpha: 0.3,
   rotateMs: 0, // data-driven by default; e.g. 15 * 60_000 to rotate
+  cheats: true,
+  cheatMinChance: 0.3,
+  cheatMargin: 0.03,
+  ejectChance: 0.1,
+  cheatMaxWinRate: 0.95,
 };
+
+// ---------- cheats (SF14.2) ----------
+//
+// A cheat spends our turn. Success (chance p, falling with each attempt this game) gives the
+// cheat's position; failure skips our turn, and after the first attempt a failure ejects us
+// (~10%, a loss). With win probabilities from our own search:
+//   EV = p·V(success) + (1 − p)·(1 − eject)·V(turn skipped)
+// and a cheat is played only when EV beats the normal move's V by `cheatMargin`.
+
+export interface CheatOption {
+  kind: "twoMoves" | "removeRouter";
+  /** board indices: [m1, m2] or [stone] */
+  cells: number[];
+  /** win probability if the cheat succeeds */
+  value: number;
+}
+
+export function cheatEV(p: number, eject: number, vSuccess: number, vSkip: number): number {
+  return p * vSuccess + (1 - p) * (1 - eject) * vSkip;
+}
+
+export function chooseCheat(
+  options: CheatOption[],
+  p: number,
+  priorCheats: number,
+  vNormal: number,
+  vSkip: number,
+  cfg: GoConfig = DEFAULT_GO,
+): (CheatOption & { ev: number }) | null {
+  if (!cfg.cheats || p < cfg.cheatMinChance || vNormal > cfg.cheatMaxWinRate) return null;
+  const eject = priorCheats > 0 ? cfg.ejectChance : 0;
+  let best: (CheatOption & { ev: number }) | null = null;
+  for (const o of options) {
+    const ev = cheatEV(p, eject, o.value, vSkip);
+    if (ev > vNormal + cfg.cheatMargin && (!best || ev > best.ev)) best = { ...o, ev };
+  }
+  return best;
+}
 
 /** Whose turn it is in rotation mode, and since when. */
 export interface Rotation {

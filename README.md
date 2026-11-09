@@ -284,7 +284,15 @@ joined factions does not.
   with points. Thinking is sliced (`ns.sleep(0)`) so the UI stays responsive. Offline
   (`node tools/go-bench.mjs 7 6 300 5.5`) it beats a tactical bot every game at ~8.5k
   playouts/move on 7×7.
-- *Rotation* (default): every available opponent gets a 15-minute turn, in weight order
+- *Cheats* (SF14.2): a cheat spends our turn; it succeeds with chance p (falling with each
+  attempt that game), a failure skips our turn, and after the first attempt a failure ejects us
+  (~10%, a loss). Each turn with p ≥ 30% and a normal move that isn't already ≥95% winning, our
+  own search values the options — two moves (best move + best follow-up), or removing one stone
+  from each of up to 3 enemy chains with ≤2 liberties (opponent to move, via a color-swapped
+  search) — and the skipped turn; a cheat is played only if p·V(success) + (1−p)·(1−eject)·V(skip)
+  beats the normal move by 0.03. Calls go through the proxy (8 GB each). `data/go.txt` counts
+  attempts, successes, ejections and the summed predicted chance, to check the odds.
+- *Rotation* (optional): every available opponent gets a 15-minute turn, in weight order
   (Daedalus first), so every bonus grows instead of one. `data/go.txt` shows whose turn it is.
 - *Matchup picker*: tracks each (opponent, size) arm as an EMA of bonus-points gained per game
   and minutes per game. In rotation it picks the board size for the current opponent; with
@@ -353,5 +361,5 @@ faction-working.
 - [x] Corporation: Agriculture, boost materials, research, investment rounds, dividends
 - [ ] Corporation: product division (Tobacco), exports, dividend rate from data
 - [x] Infiltration: model-reading autoplayer, rep-per-second trigger vs. faction work
-- [ ] IPvGO cheats (SF14 `ns.go.cheat`) where the success chance is worth the risk
+- [x] IPvGO cheats (SF14.2): played when their search-valued EV beats the normal move
 - [x] Endgame: Daedalus → The Red Pill → w0r1d_d43m0n, then auto-continue into the next BN12 level
