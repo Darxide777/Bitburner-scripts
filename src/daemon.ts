@@ -273,6 +273,7 @@ export async function main(ns: NS): Promise<void> {
     // corp calls run through ~22 GB proxies (corporation functions cost 10–20 GB each)
     const corpProxyGB = corpOk && ns.isRunning(SCRIPTS.corpManager, "home") ? 22 : 0;
     const reserve = homeReserve(ns, wanted, (stanekStatus?.reserveGB ?? 0) + corpProxyGB);
+    lastReserve = reserve;
     const hackCfg: Partial<HackConfig> = {
       homeReserve: reserve,
       // lend spare RAM to factions while we are working for one
@@ -306,7 +307,7 @@ export async function main(ns: NS): Promise<void> {
     // ---- persistence ----
     if (s) {
       const hackStatus = readJson<{ expectedPerSec?: number; poolTotal?: number }>(ns, DATA.hack, {});
-      writeJson(ns, DATA.status, { snapshot: s, metrics: m, hack: hackStatus, plan: current, stanek: stanekStatus });
+      writeJson(ns, DATA.status, { snapshot: s, metrics: m, hack: hackStatus, plan: current, stanek: stanekStatus, ram: ramReport(ns) });
       const ctx: DaemonContext = {
         t: Date.now(),
         node: s.node,
@@ -332,6 +333,38 @@ export async function main(ns: NS): Promise<void> {
 }
 
 /** Kill everything on home except the daemon (before install/destroy, which wipe scripts anyway). */
+let lastReserve = 0;
+
+/** Home RAM picture for the status file: what each task costs, who uses home, the reserve. */
+function ramReport(ns: NS) {
+  const procs = ns.ps("home").map((p) => ({ file: p.filename, threads: p.threads, gb: ns.getScriptRam(p.filename, "home") * p.threads }));
+  const byFile = new Map<string, number>();
+  for (const p of procs) byFile.set(p.file, (byFile.get(p.file) ?? 0) + p.gb);
+  const tasks = Object.fromEntries(
+    ns
+      .ls("home", "tasks/")
+      .filter((f) => f.endsWith(".js"))
+      .map((f) => [f, ns.getScriptRam(f, "home")]),
+  );
+  const proxies = Object.fromEntries(
+    ns
+      .ls("home", "tmp/call/")
+      .filter((f) => f.endsWith(".js"))
+      .map((f) => [f.replace("tmp/call/", ""), ns.getScriptRam(f, "home")])
+      .sort((a, b) => (b[1] as number) - (a[1] as number))
+      .slice(0, 12),
+  );
+  return {
+    home: ns.getServerMaxRam("home"),
+    used: ns.getServerUsedRam("home"),
+    reserve: lastReserve,
+    daemon: ns.getScriptRam(SCRIPTS.daemon, "home"),
+    users: [...byFile].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([file, gb]) => ({ file, gb: Math.round(gb * 10) / 10 })),
+    tasks,
+    proxies,
+  };
+}
+
 function freeHome(ns: NS): void {
   for (const proc of ns.ps("home")) if (proc.pid !== ns.pid) ns.kill(proc.pid);
 }
