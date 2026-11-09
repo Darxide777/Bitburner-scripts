@@ -46,3 +46,33 @@ test("position value: longs at the bid, shorts return stake ± the move", () => 
   // shorted at 110, now ask 101: 10 × (110 + (110 − 101))
   assert.equal(positionValue(stock("A", { short: 10, shortAvg: 110, ask: 101 })), 1190);
 });
+
+test("pre-4S: estimates follow a simulated forecast, flips go neutral, warm-up stays neutral", async () => {
+  const { estimateFromPrices, preForecast, DEFAULT_PRE } = await import("../dist/lib/plan/stocks.js");
+  // deterministic pseudo-random walk with a known forecast
+  let seed = 42;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31);
+  const walk = (start, n, f, vol = 0.02) => {
+    const p = [start];
+    for (let i = 0; i < n; i++) p.push(p[p.length - 1] * (1 + (rnd() < f ? 1 : -1) * rnd() * vol));
+    return p;
+  };
+  const up = walk(100, 400, 0.7);
+  const est = estimateFromPrices(up, 400);
+  assert.ok(Math.abs(est.forecast - 0.7) < 0.06, `forecast ${est.forecast}`);
+  assert.ok(Math.abs(est.volatility - 0.02) < 0.004, `volatility ${est.volatility}`); // 2 × mean |move|
+  // warm-up: too few ticks → neutral and not ready
+  const w = preForecast(up.slice(0, 10));
+  assert.equal(w.ready, false);
+  assert.equal(w.forecast, 0.5);
+  // 22 up-ticks then 8 down: long window (20 moves) = 12/20 = 0.6, short (8) = 0 → flip → neutral
+  const flip = [100];
+  for (let i = 0; i < 22; i++) flip.push(flip[flip.length - 1] * 1.01);
+  for (let i = 0; i < 8; i++) flip.push(flip[flip.length - 1] * 0.99);
+  assert.ok(Math.abs(estimateFromPrices(flip, DEFAULT_PRE.longWindow).forecast - 0.6) < 1e-9);
+  const f = preForecast(flip);
+  assert.equal(f.ready, true);
+  assert.equal(f.forecast, 0.5, "flip detected");
+  // without the down-run it stays a clean up-trend
+  assert.equal(preForecast(flip.slice(0, 23)).forecast, 1);
+});

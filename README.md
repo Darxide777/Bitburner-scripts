@@ -187,8 +187,15 @@ every market update: long above a 0.55 forecast, short below 0.45 (SF8.2), best 
 (|forecast − 0.5| × volatility) first, closing when the forecast crosses 0.5. It keeps the
 planner's current infra share (≥10%) in cash and pauses while the casino bets. The planner
 counts the portfolio's liquidation value as money; `tasks/install.js` sells everything before
-buying augs, since installing wipes positions without paying out. No pre-4S (price-history)
-trading yet.
+buying augs, since installing wipes positions without paying out.
+
+*Pre-4S* (with just the TIX API, until the 4S API is bought): forecast ≈ share of up-ticks over
+the last 20 ticks, volatility ≈ 2 × mean |move|; a short 8-tick window that strongly disagrees
+means the trend flipped, and the stock is treated as neutral (closes positions, no entries).
+Entries need |forecast − 0.5| ≥ 0.1; stocks without a full window are left alone, and the price
+history is saved (`data/stock-history.txt`) so restarts don't need a warm-up. Its closed trades
+are tracked separately: after 10, a net loss stops new entries for good (exits only).
+`"stocks": ...` / `preCfg` tune it; `pre4s: false` in the stock control turns it off.
 
 **Infiltration** (`lib/plan/infiltration.ts` decides, `infiltrate.ts` plays). The game punishes
 scripted key presses on purpose (an untrusted keydown hospitalizes you), so no key events are
@@ -332,7 +339,7 @@ faction-working.
 - [ ] Sleeves: pick recovery slots from the measured break-even instead of a fixed count
 - [x] Coding contracts: all 30 types, per-build self-test against the game
 - [x] Stock market: 4S forecasts, longs + shorts, liquidation before install
-- [ ] Stock market: pre-4S trading from price history
+- [x] Stock market: pre-4S trading from price history, self-disabling on a losing record
 - [x] Corporation: Agriculture, boost materials, research, investment rounds, dividends
 - [ ] Corporation: product division (Tobacco), exports, dividend rate from data
 - [x] Infiltration: model-reading autoplayer, rep-per-second trigger vs. faction work

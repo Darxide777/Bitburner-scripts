@@ -6,7 +6,20 @@
 // tasks/install.js sells everything first (installing wipes positions without paying out).
 import type { NS } from "@ns";
 import { appendJsonl, readJson, writeJson } from "../lib/io.js";
-import { decideTrades, DEFAULT_STOCKS, positionValue, type StockConfig, type StockInfo } from "../lib/plan/stocks.js";
+import {
+  decideTrades,
+  DEFAULT_PRE,
+  DEFAULT_STOCKS,
+  positionValue,
+  preForecast,
+  type PreConfig,
+  type StockConfig,
+  type StockInfo,
+} from "../lib/plan/stocks.js";
+
+/** mid prices per symbol, newest last (pre-4S estimates); saved so restarts need no warm-up */
+const HISTORY = "data/stock-history.txt";
+const HISTORY_LEN = 60;
 import { DATA } from "../lib/paths.js";
 
 export interface StocksControl {
@@ -14,6 +27,9 @@ export interface StocksControl {
   /** buy WSE/TIX/4S API access once these cost at most this fraction of cash */
   accessBudgetFrac?: number;
   cfg?: Partial<StockConfig>;
+  /** pre-4S trading from price history (until the 4S TIX API is bought) */
+  pre4s?: boolean;
+  preCfg?: Partial<PreConfig>;
 }
 
 export interface StocksStatus {
@@ -26,6 +42,10 @@ export interface StocksStatus {
   realized: number;
   trades: number;
   note: string;
+  /** "4S", "pre-4S" or "waiting" */
+  mode: string;
+  /** pre-4S results (kept across restarts): it stops opening positions if these lose money */
+  pre: { realized: number; closed: number; stopped: boolean };
 }
 
 export async function main(ns: NS): Promise<void> {
@@ -36,6 +56,11 @@ export async function main(ns: NS): Promise<void> {
   let trades = 0;
   /** shorting needs SF8.2 (or BitNode 8): buyShort throws without it, so stop trying */
   let shortsOk = true;
+  const prev = readJson<Partial<StocksStatus>>(ns, DATA.stocks, {});
+  const pre = { realized: 0, closed: 0, stopped: false, ...prev.pre };
+  const saved = readJson<{ t?: number; prices?: Record<string, number[]> }>(ns, HISTORY, {});
+  // a short gap (restart) is fine; a long one would splice two unrelated stretches together
+  const history = new Map<string, number[]>(Date.now() - (saved.t ?? 0) < 120_000 ? Object.entries(saved.prices ?? {}) : []);
 
   while (true) {
     const ctl = readJson<StocksControl>(ns, DATA.stocksConfig, { trade: false });
@@ -50,6 +75,8 @@ export async function main(ns: NS): Promise<void> {
       realized,
       trades,
       note: "",
+      mode: "waiting",
+      pre,
     };
 
     // ---- access (one-off per BitNode; it survives installs) ----
@@ -65,41 +92,64 @@ export async function main(ns: NS): Promise<void> {
     const tix = wse && acquire(status.access.tix, C.TixApiCost, "TIX API access", () => S.purchaseTixApi());
     const api = tix && acquire(status.access.api4s, C.MarketDataTixApi4SCost, "4S Market Data TIX API", () => S.purchase4SMarketDataTixApi());
     status.access = { wse, tix, api4s: api };
-    if (!api) {
+    const preCfg: PreConfig = { ...DEFAULT_PRE, ...ctl.preCfg };
+    const preOn = ctl.pre4s !== false;
+    if (!tix || (!api && !preOn)) {
       status.note = "waiting to afford market access (WSE → TIX API → 4S TIX API)";
       writeJson(ns, DATA.stocks, status);
       await ns.sleep(30_000);
       continue;
     }
+    status.mode = api ? "4S" : "pre-4S";
 
     // ---- market ----
+    const ready = new Set<string>();
     const stocks: StockInfo[] = S.getSymbols().map((sym) => {
       const [long, longAvg, short, shortAvg] = S.getPosition(sym);
-      return {
-        sym,
-        forecast: S.getForecast(sym),
-        volatility: S.getVolatility(sym),
-        ask: S.getAskPrice(sym),
-        bid: S.getBidPrice(sym),
-        maxShares: S.getMaxShares(sym),
-        long,
-        longAvg,
-        short,
-        shortAvg,
-      };
+      const ask = S.getAskPrice(sym);
+      const bid = S.getBidPrice(sym);
+      const h = [...(history.get(sym) ?? []), (ask + bid) / 2].slice(-HISTORY_LEN);
+      history.set(sym, h);
+      let forecast: number;
+      let volatility: number;
+      if (api) {
+        forecast = S.getForecast(sym);
+        volatility = S.getVolatility(sym);
+        ready.add(sym);
+      } else {
+        const est = preForecast(h, preCfg);
+        forecast = est.forecast;
+        volatility = est.volatility;
+        if (est.ready) ready.add(sym);
+      }
+      return { sym, forecast, volatility, ask, bid, maxShares: S.getMaxShares(sym), long, longAvg, short, shortAvg };
     });
+    writeJson(ns, HISTORY, { t: Date.now(), prices: Object.fromEntries(history) });
 
     if (ctl.trade) {
       const bySym = new Map(stocks.map((s) => [s.sym, s]));
-      for (const t of decideTrades(stocks, cash(), C.StockMarketCommission, cfg)) {
+      // pre-4S: wider entry edge; stocks still warming up are left alone entirely (their
+      // neutral 0.5 estimate would otherwise close positions); a losing record stops entries
+      const tradeCfg = api ? cfg : { ...cfg, enterEdge: preCfg.enterEdge };
+      let decided = decideTrades(stocks.filter((s) => ready.has(s.sym)), cash(), C.StockMarketCommission, tradeCfg);
+      if (!api && pre.stopped) decided = decided.filter((t) => t.kind === "sellLong" || t.kind === "sellShort");
+      for (const t of decided) {
         const s = bySym.get(t.sym)!;
         let price = 0;
         if (t.kind === "sellLong") {
           price = S.sellStock(t.sym, t.shares);
-          if (price) realized += t.shares * (price - s.longAvg) - C.StockMarketCommission;
+          if (price) {
+            const pl = t.shares * (price - s.longAvg) - 2 * C.StockMarketCommission; // both legs' fees
+            realized += pl;
+            if (!api) [pre.realized, pre.closed] = [pre.realized + pl, pre.closed + 1];
+          }
         } else if (t.kind === "sellShort") {
           price = S.sellShort(t.sym, t.shares);
-          if (price) realized += t.shares * (s.shortAvg - price) - C.StockMarketCommission;
+          if (price) {
+            const pl = t.shares * (s.shortAvg - price) - 2 * C.StockMarketCommission;
+            realized += pl;
+            if (!api) [pre.realized, pre.closed] = [pre.realized + pl, pre.closed + 1];
+          }
         } else if (t.kind === "buyLong") price = S.buyStock(t.sym, t.shares);
         else
           try {
@@ -109,6 +159,16 @@ export async function main(ns: NS): Promise<void> {
           }
         if (price) trades++;
       }
+      if (!api && !pre.stopped && pre.closed >= preCfg.minTrades && pre.realized < 0) {
+        pre.stopped = true;
+        appendJsonl(ns, DATA.events, {
+          t: Date.now(),
+          kind: "stocks",
+          msg: `pre-4S trading stopped: ${pre.closed} closed trades lost $${ns.format.number(-pre.realized)} (only exits from now on)`,
+        });
+      }
+      if (!api && ready.size < stocks.length) status.note = `pre-4S: ${ready.size}/${stocks.length} stocks have enough history`;
+      else if (!api && pre.stopped) status.note = "pre-4S stopped (losing record): exits only";
     } else status.note = "paused (casino running)";
 
     // re-read positions after trading for an accurate value

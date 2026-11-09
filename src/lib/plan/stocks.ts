@@ -90,3 +90,53 @@ export function decideTrades(stocks: StockInfo[], cash: number, commission: numb
   }
   return trades;
 }
+
+// ---------- pre-4S: forecasts estimated from price history ----------
+//
+// Each market tick a stock rises with probability `forecast` and the forecast flips sides
+// now and then, so: forecast ≈ share of up-moves over the last `longWindow` ticks, and a
+// short window that disagrees strongly with it means a flip — then the stock is treated as
+// neutral (0.5), which closes positions and blocks entries. Entries need a wider edge than
+// with 4S data, and the whole mode turns itself off if its closed trades lose money.
+
+export interface PreConfig {
+  longWindow: number;
+  shortWindow: number;
+  /** enter at |forecast − 0.5| ≥ this (4S uses 0.05) */
+  enterEdge: number;
+  /** a short window this far on the other side of 0.5 = trend flip */
+  flipEdge: number;
+  /** judge the mode after this many closed trades: net loss → stop opening */
+  minTrades: number;
+}
+
+export const DEFAULT_PRE: PreConfig = { longWindow: 20, shortWindow: 8, enterEdge: 0.1, flipEdge: 0.1, minTrades: 10 };
+
+/** Share of up-moves and mean |relative move| over the last `window` moves of `prices`. */
+export function estimateFromPrices(prices: number[], window: number): { forecast: number; volatility: number; moves: number } {
+  const p = prices.slice(-(window + 1));
+  let ups = 0;
+  let moves = 0;
+  let absSum = 0;
+  for (let i = 1; i < p.length; i++) {
+    if (p[i] === p[i - 1]) continue;
+    moves++;
+    if (p[i] > p[i - 1]) ups++;
+    absSum += Math.abs(p[i] - p[i - 1]) / p[i - 1];
+  }
+  return { forecast: moves ? ups / moves : 0.5, volatility: moves ? (2 * absSum) / moves : 0, moves };
+}
+
+/**
+ * Pre-4S forecast for one stock: the long-window estimate, or 0.5 (neutral) while there's
+ * too little history or the short window signals a flip. Volatility: 2 × mean |move| (moves
+ * are uniform up to the volatility).
+ */
+export function preForecast(prices: number[], cfg: PreConfig = DEFAULT_PRE): { forecast: number; volatility: number; ready: boolean } {
+  const long = estimateFromPrices(prices, cfg.longWindow);
+  if (long.moves < cfg.longWindow) return { forecast: 0.5, volatility: long.volatility, ready: false };
+  const short = estimateFromPrices(prices, cfg.shortWindow);
+  const flipped =
+    (long.forecast > 0.5 && short.forecast <= 0.5 - cfg.flipEdge) || (long.forecast < 0.5 && short.forecast >= 0.5 + cfg.flipEdge);
+  return { forecast: flipped ? 0.5 : long.forecast, volatility: long.volatility, ready: true };
+}

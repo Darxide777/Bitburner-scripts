@@ -807,8 +807,8 @@ function draw(
   const st = readJson<Partial<StocksStatus>>(ns, DATA.stocks, {});
   if (st.t && Date.now() - st.t < 120_000)
     L.push(
-      st.access?.api4s
-        ? `stocks: ${money(st.value ?? 0)} in ${st.positions ?? 0} positions  realized ${money(st.realized ?? 0)}  ${st.trades ?? 0} trades${st.note ? `  (${st.note})` : ""}`
+      st.mode && st.mode !== "waiting"
+        ? `stocks (${st.mode}): ${money(st.value ?? 0)} in ${st.positions ?? 0} positions  realized ${money(st.realized ?? 0)}  ${st.trades ?? 0} trades${st.note ? `  (${st.note})` : ""}`
         : `stocks: ${st.note}`,
     );
   const bb = readJson<Partial<BladeburnerStatus>>(ns, DATA.bladeburner, {});
