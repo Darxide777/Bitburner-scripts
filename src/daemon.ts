@@ -35,7 +35,7 @@ import type { StocksControl, StocksStatus } from "./stocks/manager.js";
 import type { HacknetControl, HacknetStatus } from "./hacknet/manager.js";
 import type { HacknetConfig } from "./lib/plan/hacknet.js";
 import type { CorpConfig } from "./lib/plan/corp.js";
-import { chooseTarget, DEFAULT_INFILTRATION, type InfiltrationConfig } from "./lib/plan/infiltration.js";
+import { chooseTarget, cooldownAfter, DEFAULT_INFILTRATION, type InfiltrationConfig } from "./lib/plan/infiltration.js";
 import type { InfiltrationControl, InfiltrationState } from "./infiltrate.js";
 import type { CorpControl, CorpStatus } from "./corp/manager.js";
 
@@ -399,20 +399,29 @@ async function infiltrationModule(
   if (dcfg.manageInfiltration && faction && !casinoBetting && !p.train) {
     if (Date.now() - infilEstimate.t > 5 * 60_000) {
       const locs = ns.infiltration.getPossibleLocations();
-      const infos = await callEach<{ difficulty: number; maxClearanceLevel: number; reward: { tradeRep: number; sellCash: number } }>(
+      const infos = await callEach<{
+        difficulty: number;
+        maxClearanceLevel: number;
+        startingSecurityLevel: number;
+        reward: { tradeRep: number; sellCash: number };
+      }>(
         ns,
         "infiltration.getInfiltration",
         locs.map((l) => [l.name]),
       );
       const targets = locs.flatMap((l, k) => {
         const i = infos[k];
-        return i ? [{ name: l.name, city: l.city, difficulty: i.difficulty, levels: i.maxClearanceLevel, tradeRep: i.reward.tradeRep, sellCash: i.reward.sellCash }] : [];
+        return i
+          ? [{ name: l.name, city: l.city, difficulty: i.difficulty, levels: i.maxClearanceLevel, tradeRep: i.reward.tradeRep, sellCash: i.reward.sellCash, startingSecurity: i.startingSecurityLevel }]
+          : [];
       });
-      const best = chooseTarget(targets, st.measured ?? {}, cfg);
+      const hp = (await call<{ hp: { current: number } }>(ns, "getPlayer"))?.hp.current ?? 0;
+      const best = chooseTarget(targets, st.measured ?? {}, cfg, { current: hp, harmonizer: data.installed.includes("SoA - phyzical WKS harmonizer") });
       infilEstimate = { t: Date.now(), repPerSec: best?.repPerSec ?? 0, target: best?.target.name ?? "" };
     }
     const workRate = data.factions[faction]?.workRepPerSec ?? 0;
-    const failedRecently = st.lastRun && !st.lastRun.ok && Date.now() - (st.t ?? 0) < 10 * 60_000;
+    // back off: 10 min after a failed run, doubling per failure in a row (max 2 h)
+    const failedRecently = st.lastRun && !st.lastRun.ok && Date.now() - (st.t ?? 0) < cooldownAfter(st.consecutiveFailures ?? 1, cfg);
     active = !failedRecently && infilEstimate.repPerSec > workRate * cfg.margin;
   }
   const ctl: InfiltrationControl = { active, faction, cfg: dcfg.infiltration };

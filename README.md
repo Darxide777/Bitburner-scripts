@@ -193,7 +193,11 @@ are recognised by their fields, not (minified) class names, and a key is never s
 stage has moved on. The daemon starts it for the faction the planner is grinding when the best
 location's rep/s — measured per location (EMA; dropped once rewards decay below 50% of the
 first run), else estimated from `ns.infiltration` — beats that faction's work rep/s by 20%,
-and not during the casino, Bladeburner training, or within 10 min of a failed run. While it
+and not during the casino or Bladeburner training. Safety: only locations under difficulty 3
+(the game's value already accounts for your stats; 3.5 means instant discovery) whose failures
+you could survive twice at current HP (3 × starting security each, halved by the WKS harmonizer);
+a location is dropped once it has ≥3 attempts and <67% success; after a failed run the daemon
+waits 10 min, doubling per failure in a row (max 2 h). While it
 runs the daemon leaves work, travel and installs alone. This deliberately bypasses the game's
 anti-automation; `"manageInfiltration": false` turns it off.
 

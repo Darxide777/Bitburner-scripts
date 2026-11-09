@@ -125,6 +125,14 @@ export interface InfiltrationConfig {
   decayFloor: number;
   /** stop below this share of max HP (failures cost HP) */
   minHpFrac: number;
+  /** only attempt a location if current HP survives this many failures there (3 × security each) */
+  failuresToSurvive: number;
+  /** drop a location once it has this many attempts and a success rate below minSuccess */
+  minAttempts: number;
+  minSuccess: number;
+  /** daemon cooldown after a failed run, doubled per consecutive failure, capped */
+  cooldownMs: number;
+  maxCooldownMs: number;
 }
 
 export const DEFAULT_INFILTRATION: InfiltrationConfig = {
@@ -133,7 +141,21 @@ export const DEFAULT_INFILTRATION: InfiltrationConfig = {
   margin: 1.2,
   decayFloor: 0.5,
   minHpFrac: 0.5,
+  failuresToSurvive: 2,
+  minAttempts: 3,
+  minSuccess: 0.67,
+  cooldownMs: 10 * 60_000,
+  maxCooldownMs: 2 * 3600_000,
 };
+
+/** HP lost per failed level at a location (the game: 3 × starting security; halved by WKS harmonizer). */
+export const failureDamage = (startingSecurity: number, harmonizer = false) => startingSecurity * 3 * (harmonizer ? 0.5 : 1);
+
+/** Cooldown after `consecutive` failed runs in a row (0 = none). */
+export function cooldownAfter(consecutive: number, cfg: InfiltrationConfig = DEFAULT_INFILTRATION): number {
+  if (consecutive <= 0) return 0;
+  return Math.min(cfg.maxCooldownMs, cfg.cooldownMs * 2 ** (consecutive - 1));
+}
 
 export interface TargetInfo {
   name: string;
@@ -142,6 +164,8 @@ export interface TargetInfo {
   levels: number;
   tradeRep: number;
   sellCash: number;
+  /** starting security level: each failed level costs 3× this in HP */
+  startingSecurity?: number;
 }
 
 export interface Measured {
@@ -151,10 +175,16 @@ export interface Measured {
   firstRep: number;
   lastRep: number;
   runs: number;
+  /** all attempts there, successful or not */
+  attempts?: number;
+  fails?: number;
 }
 
 /** Estimated rep/s: measured if we have runs (and it hasn't decayed out), else from the API. */
 export function estimateRepPerSec(t: TargetInfo, m: Measured | undefined, cfg: InfiltrationConfig = DEFAULT_INFILTRATION): number {
+  // too unreliable here: drop it rather than keep paying HP for failures
+  const attempts = m?.attempts ?? 0;
+  if (attempts >= cfg.minAttempts && 1 - (m?.fails ?? 0) / attempts < cfg.minSuccess) return 0;
   if (m && m.runs > 0) return m.lastRep < m.firstRep * cfg.decayFloor ? 0 : m.repPerSec;
   return t.tradeRep / Math.max(1, t.levels * cfg.secPerLevel);
 }
@@ -163,10 +193,13 @@ export function chooseTarget(
   targets: TargetInfo[],
   measured: Record<string, Measured>,
   cfg: InfiltrationConfig = DEFAULT_INFILTRATION,
+  /** current HP and whether failures are halved (WKS harmonizer); omit to skip the HP rule */
+  hp?: { current: number; harmonizer?: boolean },
 ): { target: TargetInfo; repPerSec: number } | null {
   let best: { target: TargetInfo; repPerSec: number } | null = null;
   for (const t of targets) {
     if (!(t.difficulty < cfg.maxDifficulty) || t.levels <= 0) continue;
+    if (hp && hp.current <= failureDamage(t.startingSecurity ?? 0, hp.harmonizer) * cfg.failuresToSurvive) continue;
     const r = estimateRepPerSec(t, measured[t.name], cfg);
     if (r > 0 && (!best || r > best.repPerSec)) best = { target: t, repPerSec: r };
   }
@@ -175,6 +208,14 @@ export function chooseTarget(
 
 export function recordRun(prev: Measured | undefined, rep: number, seconds: number): Measured {
   const rate = rep / Math.max(1, seconds);
-  if (!prev || prev.runs === 0) return { repPerSec: rate, firstRep: rep, lastRep: rep, runs: 1 };
-  return { repPerSec: prev.repPerSec + 0.3 * (rate - prev.repPerSec), firstRep: prev.firstRep, lastRep: rep, runs: prev.runs + 1 };
+  const attempts = (prev?.attempts ?? prev?.runs ?? 0) + 1;
+  const fails = prev?.fails ?? 0;
+  if (!prev || prev.runs === 0) return { repPerSec: rate, firstRep: rep, lastRep: rep, runs: 1, attempts, fails };
+  return { repPerSec: prev.repPerSec + 0.3 * (rate - prev.repPerSec), firstRep: prev.firstRep, lastRep: rep, runs: prev.runs + 1, attempts, fails };
+}
+
+/** A failed attempt at a location (counts toward its success rate, not its rep/s). */
+export function recordFailure(prev: Measured | undefined): Measured {
+  const base = prev ?? { repPerSec: 0, firstRep: 0, lastRep: 0, runs: 0 };
+  return { ...base, attempts: (base.attempts ?? base.runs) + 1, fails: (base.fails ?? 0) + 1 };
 }

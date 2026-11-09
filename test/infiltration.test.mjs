@@ -60,3 +60,24 @@ test("target choice: below the difficulty cap, best rep/s, measured beats estima
   decayed = recordRun(decayed, 400, 10); // below 50% of the first run
   assert.equal(estimateRepPerSec(T("x", 1, 5, 1e9), decayed, DEFAULT_INFILTRATION), 0);
 });
+
+test("safety: skip targets whose failures we couldn't survive; drop unreliable ones; back off", async () => {
+  const { failureDamage, cooldownAfter, recordFailure } = await import("../dist/lib/plan/infiltration.js");
+  const T = (name, sec, tradeRep) => ({ name, city: "Aevum", difficulty: 1, levels: 5, tradeRep, sellCash: 0, startingSecurity: sec });
+  const targets = [T("safe", 2, 100), T("risky", 20, 10_000)];
+  // risky: 60 HP per failure, 2 failures = 120 > 100 HP → skipped
+  assert.equal(failureDamage(20), 60);
+  assert.equal(chooseTarget(targets, {}, DEFAULT_INFILTRATION, { current: 100 }).target.name, "safe");
+  assert.equal(chooseTarget(targets, {}, DEFAULT_INFILTRATION, { current: 100, harmonizer: true }).target.name, "risky", "halved: 60 < 100");
+  assert.equal(chooseTarget(targets, {}, DEFAULT_INFILTRATION, { current: 5 }), null, "nothing survivable");
+  // 1 success, 2 failures → 33% < 67% after 3 attempts → dropped
+  let m = recordRun(undefined, 1000, 10);
+  m = recordFailure(m);
+  assert.ok(estimateRepPerSec(T("x", 1, 1), m) > 0, "2 attempts: too early to judge");
+  m = recordFailure(m);
+  assert.equal(estimateRepPerSec(T("x", 1, 1), m), 0);
+  assert.equal(cooldownAfter(0), 0);
+  assert.equal(cooldownAfter(1), 10 * 60_000);
+  assert.equal(cooldownAfter(3), 40 * 60_000);
+  assert.equal(cooldownAfter(10), 2 * 3600_000);
+});

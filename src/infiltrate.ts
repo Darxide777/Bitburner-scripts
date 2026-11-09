@@ -21,6 +21,7 @@ import {
   chooseTarget,
   DEFAULT_INFILTRATION,
   nextStep,
+  recordFailure,
   recordRun,
   type InfiltrationConfig,
   type Measured,
@@ -40,9 +41,14 @@ export interface InfiltrationState {
   measured: Record<string, Measured>;
   runs: number;
   failures: number;
+  /** failed runs in a row (the daemon's cooldown doubles with each) */
+  consecutiveFailures?: number;
   lastRun: { target: string; faction: string; rep: number; cash: number; seconds: number; ok: boolean } | null;
   note: string;
 }
+
+/** halves the HP lost per failed level */
+const HARMONIZER = "SoA - phyzical WKS harmonizer";
 
 interface InfilObj {
   stage: Model & { onKey: (e: unknown) => void };
@@ -73,7 +79,12 @@ export async function main(ns: NS): Promise<void> {
     const locations = ns.infiltration.getPossibleLocations();
     const targets: TargetInfo[] = [];
     for (const loc of locations) {
-      const info = await call<{ difficulty: number; maxClearanceLevel: number; reward: { tradeRep: number; sellCash: number } }>(
+      const info = await call<{
+        difficulty: number;
+        maxClearanceLevel: number;
+        startingSecurityLevel: number;
+        reward: { tradeRep: number; sellCash: number };
+      }>(
         ns,
         "infiltration.getInfiltration",
         loc.name,
@@ -86,10 +97,12 @@ export async function main(ns: NS): Promise<void> {
           levels: info.maxClearanceLevel,
           tradeRep: info.reward.tradeRep,
           sellCash: info.reward.sellCash,
+          startingSecurity: info.startingSecurityLevel,
         });
     }
-    const pick = chooseTarget(targets, st.measured, cfg);
-    if (!pick) return save("no location below the difficulty cap");
+    const harmonizer = (await call<string[]>(ns, "singularity.getOwnedAugmentations", false))?.includes(HARMONIZER) ?? false;
+    const pick = chooseTarget(targets, st.measured, cfg, { current: p.hp.current, harmonizer });
+    if (!pick) return save(`no location is safe enough: under difficulty ${cfg.maxDifficulty}, survivable (HP ${Math.floor(p.hp.current)}), and reliable`);
     const t = pick.target;
 
     // ---- get there and start ----
@@ -150,7 +163,11 @@ export async function main(ns: NS): Promise<void> {
     const rep = ((await call<number>(ns, "singularity.getFactionRep", faction)) ?? 0) - repBefore;
     const cash = ns.getServerMoneyAvailable("home") - cashBefore;
     st.runs++;
-    if (!ok) st.failures++;
+    if (!ok) {
+      st.failures++;
+      st.consecutiveFailures = (st.consecutiveFailures ?? 0) + 1;
+      st.measured[t.name] = recordFailure(st.measured[t.name]);
+    } else st.consecutiveFailures = 0;
     if (ok && traded && rep > 0) st.measured[t.name] = recordRun(st.measured[t.name], rep, seconds);
     st.lastRun = { target: t.name, faction, rep, cash, seconds, ok };
     event(
