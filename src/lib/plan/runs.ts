@@ -10,6 +10,8 @@ export interface RunRecord {
   /** when the run ended (install / reset seen) */
   t: number;
   durationMs: number;
+  /** value of what its install bought, stored with the record (newer runs) */
+  value?: number;
 }
 
 export interface InstallRecord {
@@ -34,6 +36,11 @@ export function valueRuns(runs: RunRecord[], installs: InstallRecord[], valueOf:
   const out: RunValue[] = [];
   for (const r of runs) {
     if (!(r.durationMs > 0)) continue;
+    if (typeof r.value === "number") {
+      const durationSec = r.durationMs / 1000;
+      out.push({ end: r.t, durationSec, value: r.value, rate: r.value / durationSec });
+      continue;
+    }
     const ev = installs
       .filter((i) => i.t <= r.t + 60_000 && i.t >= r.t - r.durationMs)
       .sort((a, b) => b.t - a.t)[0];

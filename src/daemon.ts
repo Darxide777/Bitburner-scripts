@@ -152,6 +152,10 @@ interface DaemonState {
   lastAugReset: number;
   lastNodeReset: number;
   installs: number;
+  /** installs so far this BitNode (for data/nodes.txt) */
+  nodeInstalls?: number;
+  /** milestone → ms since this BitNode started (first time each happened) */
+  milestones?: Record<string, number>;
   /** Peak values of the run in progress, summarized into data/runs.txt on reset. */
   cur: { start: number; peakIncome: number; peakRepRate: number; hackLevel: number; augsInstalled: number };
 }
@@ -330,7 +334,7 @@ export async function main(ns: NS): Promise<void> {
       writeJson(ns, DATA.context, ctx);
       if (Date.now() - lastMetricsLine > 60_000) {
         lastMetricsLine = Date.now();
-        appendJsonl(ns, DATA.metrics, metricsLine(s, m, hackStatus), 10_000);
+        appendJsonl(ns, DATA.metrics, { ...metricsLine(s, m, hackStatus), systems: systemsLine(ns) }, 10_000);
       }
       draw(ns, s, m, hackStatus, current, recent);
     }
@@ -341,6 +345,67 @@ export async function main(ns: NS): Promise<void> {
 
 /** Kill everything on home except the daemon (before install/destroy, which wipe scripts anyway). */
 let lastReserve = 0;
+/** latest skills and sleeve shock, for the per-minute metrics line */
+let lastSkills: Record<string, number> = {};
+let lastSleeveShock: number | null = null;
+
+/** First time each milestone happens this BitNode → data/milestones.txt and the node summary. */
+function noteMilestones(ns: NS, data: FactionData, s: Snapshot, event: (k: string, msg: string, d?: unknown) => void) {
+  const bb = readJson<{ inDivision?: boolean }>(ns, DATA.bladeburner, {});
+  const stocks = readJson<{ access?: { api4s?: boolean } }>(ns, DATA.stocks, {});
+  const corp = readJson<{ exists?: boolean }>(ns, DATA.corp, {});
+  const has = (a: string) => data.installed.includes(a);
+  const wd = data.worldDaemon;
+  const reached: Record<string, boolean> = {
+    "casino $10b": (s.earned.casino ?? 0) >= CASINO_CAP,
+    "Stanek's Gift accepted": has(GENESIS),
+    "gang created": !!s.gang,
+    "Bladeburner division": bbInDivision || bb.inDivision === true,
+    "The Blade's Simulacrum": has(SIMULACRUM),
+    "Bladeburners faction": !!data.factions.Bladeburners?.joined,
+    "Stanek's Gift - Awakening": has("Stanek's Gift - Awakening"),
+    "Stanek's Gift - Serenity": has("Stanek's Gift - Serenity"),
+    "Daedalus joined": !!data.factions.Daedalus?.joined,
+    "The Red Pill installed": has("The Red Pill"),
+    "w0r1d_d43m0n hack level": wd.exists && data.hackLevel >= wd.reqHack,
+    "4S TIX API": stocks.access?.api4s === true,
+    "corporation created": corp.exists === true,
+  };
+  const st = readJson<DaemonState | null>(ns, STATE_FILE, null);
+  if (!st) return;
+  // started tracking mid-node: what's already true gets today's time, flagged as such
+  const backfilled = st.milestones === undefined;
+  st.milestones ??= {};
+  let changed = backfilled;
+  for (const [name, ok] of Object.entries(reached)) {
+    if (!ok || name in st.milestones) continue;
+    const since = Date.now() - s.lastNodeReset;
+    st.milestones[name] = since;
+    changed = true;
+    appendJsonl(ns, DATA.milestones, { t: Date.now(), node: data.node, name, sinceNodeMs: since, installs: st.nodeInstalls ?? 0, backfilled });
+    if (!backfilled) event("milestone", `${name} after ${dur(since)}`);
+  }
+  if (changed) writeJson(ns, STATE_FILE, st);
+}
+
+/** Per-minute snapshot of every subsystem (from their status files) for data/metrics.txt. */
+function systemsLine(ns: NS) {
+  const bb = readJson<{ inDivision?: boolean; rank?: number; rankPerSec?: number; finalEtaSec?: number | null }>(ns, DATA.bladeburner, {});
+  const gang = readJson<{ respect?: number; territory?: number; members?: number; mode?: string; installFactor?: number }>(ns, DATA.gang, {});
+  const corp = readJson<{ exists?: boolean; funds?: number; revenue?: number; expenses?: number; public?: boolean }>(ns, DATA.corp, {});
+  const stocks = readJson<{ mode?: string; value?: number; realized?: number; pre?: { edge?: number } }>(ns, DATA.stocks, {});
+  const hn = readJson<{ servers?: number; production?: number }>(ns, DATA.hacknet, {});
+  return {
+    bladeburner: bb.inDivision ? { rank: bb.rank, rankPerSec: bb.rankPerSec, finalEtaSec: bb.finalEtaSec } : null,
+    gang: gang.members ? { respect: gang.respect, territory: gang.territory, members: gang.members, mode: gang.mode, installFactor: gang.installFactor } : null,
+    stanek: stanekStatus ? { bonus: stanekStatus.bonus, charger: stanekStatus.charger?.mode ?? null, extras: stanekStatus.extraChargers.length } : null,
+    corp: corp.exists ? { funds: corp.funds, profit: (corp.revenue ?? 0) - (corp.expenses ?? 0), public: corp.public } : null,
+    stocks: stocks.mode ? { mode: stocks.mode, value: stocks.value, realized: stocks.realized, preEdge: stocks.pre?.edge } : null,
+    hacknet: hn.servers ? { servers: hn.servers, production: hn.production } : null,
+    skills: lastSkills,
+    sleeveShock: lastSleeveShock,
+  };
+}
 let runRateCache: { t: number; rate: number | null } = { t: 0, rate: null };
 
 /**
@@ -721,6 +786,7 @@ async function factionsModule(
   const bbWon = cfg.autoDestroy && readJson<Partial<BladeburnerStatus>>(ns, DATA.bladeburner, {}).blackOpsDone === true;
   if (p.destroy || bbWon) {
     event("destroy", `${bbWon ? "Bladeburner black ops complete" : "w0r1d_d43m0n is ready"} — destroying the BitNode`);
+    writeJson(ns, DATA.destroyContext, { t: Date.now(), route: bbWon ? "bladeburner" : "hacking", node: data.node });
     freeHome(ns);
     spawnTask(ns, "tasks/destroy.js", [cfg.nextNode]);
     return p;
@@ -781,6 +847,8 @@ async function factionsModule(
 
   await bladeburnerModule(ns, data, p, dcfg, casinoRunning, event);
   await graftingModule(ns, data, p, dcfg, cfg);
+  lastSkills = Object.fromEntries(Object.entries(data.skills).map(([k, v]) => [k, Math.round(v)]));
+  noteMilestones(ns, data, s, event);
 
   // sleeves first, so none of them is sitting on the faction the player is about to work for
   if (dcfg.manageSleeves && s.sleeves > 0) {
@@ -800,6 +868,7 @@ async function factionsModule(
           bladeburner: bbInDivision && readJson<Partial<BladeburnerStatus>>(ns, DATA.bladeburner, {}).blackOpsDone !== true,
         },
       );
+      lastSleeveShock = rep.rows.length ? rep.rows.reduce((a, r) => a + r.shock, 0) / rep.rows.length : null;
       // shock-recovery experiment: one line per minute (tools/sleeve-shock.mjs to analyse later)
       if (Date.now() - lastSleeveLog > 60_000) {
         lastSleeveLog = Date.now();
@@ -829,6 +898,15 @@ async function factionsModule(
       cost: p.readyCost,
       sinceInstall: m.sinceInstall,
       money: s.money,
+    });
+    // for the run record: why, the install-timing rates, and what each aug is worth
+    const valueOf = (a: string) => augValue(data.augs[a]?.stats ?? {}, cfg.weights) + (cfg.augBonus[a] ?? 0);
+    writeJson(ns, DATA.installContext, {
+      t: Date.now(),
+      reason: p.install.reason,
+      rates: p.installRates,
+      augValues: Object.fromEntries(p.install.buy.map(([, a]) => [a, valueOf(a)])),
+      nfgValue: valueOf(NFG),
     });
     freeHome(ns);
     spawnTask(ns, "tasks/install.js", [JSON.stringify(p.install)]);
@@ -887,6 +965,16 @@ function trackRuns(ns: NS, s: Snapshot, tracker: MetricsTracker, event: (k: stri
   }
   if (st.lastAugReset !== s.lastAugReset) {
     const nodeReset = st.lastNodeReset !== s.lastNodeReset;
+    // what the install bought and why (files written just before it; only if they're this run's)
+    const fresh = <T extends { t?: number }>(x: T) => (x.t ?? 0) >= st.cur.start;
+    const bought = readJson<{ t?: number; bought?: string[]; nfg?: number; reason?: string }>(ns, DATA.lastInstall, {});
+    const ictx = readJson<{ t?: number; reason?: string; rates?: unknown; augValues?: Record<string, number>; nfgValue?: number }>(ns, DATA.installContext, {});
+    const got = fresh(bought) ? bought : {};
+    const vals = fresh(ictx) ? ictx : {};
+    const value =
+      got.bought && vals.augValues
+        ? got.bought.reduce((a, aug) => a + (vals.augValues![aug] ?? 0), 0) + (got.nfg ?? 0) * (vals.nfgValue ?? 0)
+        : undefined;
     appendJsonl(ns, DATA.runs, {
       t: s.t,
       kind: nodeReset ? "node" : "install",
@@ -897,7 +985,26 @@ function trackRuns(ns: NS, s: Snapshot, tracker: MetricsTracker, event: (k: stri
       endHackLevel: st.cur.hackLevel,
       augsBefore: st.cur.augsInstalled,
       augsAfter: s.augsInstalled,
+      bought: got.bought,
+      nfg: got.nfg,
+      value,
+      reason: vals.reason ?? got.reason,
+      rates: vals.rates,
     });
+    st.nodeInstalls = (st.nodeInstalls ?? 0) + 1;
+    if (nodeReset) {
+      const dctx = readJson<{ t?: number; route?: string; node?: number }>(ns, DATA.destroyContext, {});
+      appendJsonl(ns, DATA.nodes, {
+        t: s.t,
+        node: dctx.node ?? null,
+        durationMs: s.lastNodeReset - st.lastNodeReset,
+        installs: st.nodeInstalls,
+        route: (dctx.t ?? 0) >= st.lastNodeReset ? dctx.route : null,
+        milestones: st.milestones ?? {},
+      });
+      st.nodeInstalls = 0;
+      st.milestones = {};
+    }
     event("reset", nodeReset ? "BitNode reset detected" : `augments installed (+${s.augsInstalled - st.cur.augsInstalled})`);
     st.installs++;
     st.lastAugReset = s.lastAugReset;

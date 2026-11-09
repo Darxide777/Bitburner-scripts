@@ -15,6 +15,11 @@ export const DATA = {
   goConfig: "data/go-config.txt", // IPvGO tunables
   contracts: "data/contracts.txt", // coding contracts: totals + ones we failed (never retried)
   contractsSelftest: "data/contracts-selftest.txt", // per-build check of every solver on dummy contracts
+  installContext: "data/install-context.txt", // the daemon's view of the install it just started (rates, aug values)
+  lastInstall: "data/last-install.txt", // what tasks/install.js actually bought (kept: not capped like events)
+  destroyContext: "data/destroy-context.txt", // which route ended the BitNode
+  milestones: "data/milestones.txt", // JSONL: first time each milestone happens in a BitNode
+  nodes: "data/nodes.txt", // JSONL: one line per cleared BitNode
   context: "data/context.txt", // daemon context for user modules (overwritten every tick)
   userReserve: "data/user-reserve.txt", // { hosts: [...] } user modules want the hacking manager to leave alone
   company: "data/company.txt", // JSONL: company routes vs. faction grind (megacorp invites)

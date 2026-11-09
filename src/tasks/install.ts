@@ -5,7 +5,7 @@
 // cheapest order) → home RAM (persists within the BitNode) → NeuroFlux Governor
 // levels with whatever is left (donating for its rep where possible) → install.
 import type { FactionName, NS } from "@ns";
-import { appendJsonl } from "../lib/io.js";
+import { appendJsonl, writeJson } from "../lib/io.js";
 import { NFG } from "../lib/plan/data.js";
 import { DATA, SCRIPTS } from "../lib/paths.js";
 
@@ -62,6 +62,8 @@ export async function main(ns: NS): Promise<void> {
   }
 
   const queued = sing.getOwnedAugmentations(true).length - sing.getOwnedAugmentations(false).length;
+  // events.txt is capped; this file survives so the next run record can say what was bought
+  writeJson(ns, DATA.lastInstall, { t: Date.now(), bought, nfg, reason: a.reason });
   appendJsonl(ns, DATA.events, {
     t: Date.now(),
     kind: "install",

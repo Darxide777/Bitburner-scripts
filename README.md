@@ -30,6 +30,7 @@ While connected, the sync server also:
 - writes a build hash to `build.txt` on home once a build has settled; `daemon.js` notices the
   change and restarts itself and the hack/gang/Go managers on the new code (`tasks/restart.js`)
 
+Compare BitNodes with `node tools/nodes.mjs` (cleared nodes and the current one's milestones).
 Other commands: `npm run build`, `npm run typecheck`, `npm test` (planner unit tests),
 `npm run sync` (sync without the tsc watcher), and
 `node tools/ram-audit.mjs dist/<script>.js <RamCostGenerator.ts>`, an offline estimate of a
@@ -343,9 +344,11 @@ faction-working.
 | file | contents |
 | --- | --- |
 | `data/status.txt` | latest snapshot + metrics (overwritten each tick) |
-| `data/metrics.txt` | JSONL, one line/minute: income/s (+ by source), rep/s per faction, karma/s, time to gang, hack xp/s, RAM pool, … |
+| `data/metrics.txt` | JSONL, one line/minute: income/s (+ by source), rep/s per faction, karma/s, time to gang, hack xp/s, RAM pool, and `systems`: Bladeburner rank/rate, gang, Stanek bonuses, corp, stocks, hacknet, skills, sleeve shock |
 | `data/events.txt` | JSONL decision log (purchases, roots, resets, errors) |
-| `data/runs.txt` | JSONL, one line per augment install / node reset: duration, peak income, peak rep/s |
+| `data/runs.txt` | JSONL, one line per augment install / node reset: duration, peak income, peak rep/s, augs bought (+ NeuroFlux), their value, install reason and install-timing rates |
+| `data/nodes.txt` | JSONL, one line per cleared BitNode: length, installs, winning route, every milestone's time |
+| `data/milestones.txt` | JSONL: first time each milestone happens in a node (casino cap, gang, Bladeburner, Simulacrum, Stanek augs, Daedalus, Red Pill, w0r1d hack level, 4S, corp) |
 | `data/hack.txt` | hacking manager status: targets, batches, expected $/s |
 
 ## User modules

@@ -20,3 +20,8 @@ test("runs are valued by the augs their install bought; average = total value / 
   assert.ok(Math.abs(averageRate(v) - (3.2 + 4 + 1.1) / 2000) < 1e-12);
   assert.equal(averageRate(v.slice(0, 2)), null, "fewer than 3 valued runs");
 });
+
+test("a run's stored value wins over matching install events", () => {
+  const v = valueRuns([{ t: 1000, durationMs: 1000, value: 7 }], [{ t: 999, bought: ["A"], nfg: 0 }], () => 1, 0);
+  assert.equal(v[0].value, 7);
+});
