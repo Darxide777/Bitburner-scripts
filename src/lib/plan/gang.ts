@@ -28,6 +28,14 @@ export interface GangConfig {
   /** $ fraction per item for normal equipment / for augmentations (which survive ascension). */
   equipBudget: number;
   augBudget: number;
+  /**
+   * Seconds until the next augment install (set by the daemon). An install multiplies every
+   * member's banked ascension points by 0.95 but leaves unbanked exp alone, so points banked
+   * right before an install lose 5% for nothing: ascensions wait until after it.
+   */
+  installInSec?: number;
+  /** hold ascensions when the install is closer than this */
+  holdAscendSec: number;
 }
 
 export const DEFAULT_GANG: GangConfig = {
@@ -38,6 +46,7 @@ export const DEFAULT_GANG: GangConfig = {
   maxWantedPenalty: 0.03,
   equipBudget: 0.01,
   augBudget: 0.05,
+  holdAscendSec: 600,
 };
 
 export interface Gain {
@@ -145,6 +154,7 @@ export function decideGang(input: GangInput, cfg: GangConfig = DEFAULT_GANG): Ga
 
   // 5. ascension (at most one per update, and never a member carrying a big share of respect)
   const ascend: string[] = [];
+  const holding = cfg.installInSec !== undefined && cfg.installInSec < cfg.holdAscendSec;
   const candidates = members
     .map((m) => {
       const r = input.ascension[m.name];
@@ -155,7 +165,9 @@ export function decideGang(input: GangInput, cfg: GangConfig = DEFAULT_GANG): Ga
     .filter((x): x is { m: GangMemberInfo; ratio: number; need: number } => !!x && x.ratio >= x.need)
     .filter((x) => x.m.earnedRespect <= gang.respect * 0.3 || members.length >= 12)
     .sort((a, b) => b.ratio / b.need - a.ratio / a.need);
-  if (candidates[0]) ascend.push(candidates[0].m.name);
+  if (candidates[0] && holding)
+    notes.push(`holding ascension of ${candidates[0].m.name}: install in ~${Math.ceil(cfg.installInSec! / 60)}m would tax the new points 5%`);
+  else if (candidates[0]) ascend.push(candidates[0].m.name);
 
   return { tasks: out, ascend, warfare, wantedRate, notes };
 }

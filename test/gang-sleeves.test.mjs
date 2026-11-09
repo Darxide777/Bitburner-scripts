@@ -137,3 +137,11 @@ test("Bladeburner contracts: after grind targets, before favor; one sleeve each,
   assert.ok(!a.some((x) => x.contract === "Bounty Hunter"));
   assert.ok(a.slice(2).some((x) => x.faction === "F")); // favor next
 });
+
+test("ascensions wait when an install is near (it would tax the new points 5%)", () => {
+  const ready = { ascension: { a: { str: 2, def: 2, dex: 2, agi: 2 } } };
+  assert.deepEqual(decideGang(gin(ready), { ...DEFAULT_GANG, installInSec: 120 }).ascend, [], "install in 2 min");
+  assert.ok(decideGang(gin(ready), { ...DEFAULT_GANG, installInSec: 120 }).notes.some((n) => n.includes("holding ascension")));
+  assert.deepEqual(decideGang(gin(ready), { ...DEFAULT_GANG, installInSec: 3600 }).ascend, ["a"], "install far away");
+  assert.deepEqual(decideGang(gin(ready), { ...DEFAULT_GANG, installInSec: undefined }).ascend, ["a"], "unknown → don't hold");
+});

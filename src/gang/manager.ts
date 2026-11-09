@@ -59,6 +59,12 @@ export async function main(ns: NS): Promise<void> {
       .map(([name, o]) => ({ name, territory: o.territory, chance: G.getChanceToWinClash(name) }));
     const ascension: Record<string, Record<string, number> | undefined> = {};
     for (const m of members) ascension[m.name] = G.getAscensionResult(m.name) as Record<string, number> | undefined;
+    // what the next install will do to each member's main ascension multiplier (new / old)
+    const mainKeys = gang.isHacking ? ["hack"] : ["str", "def", "dex", "agi"];
+    const installFactors = members
+      .map((m) => G.getInstallResult(m.name) as Record<string, number> | undefined)
+      .filter((r): r is Record<string, number> => !!r)
+      .map((r) => mainKeys.reduce((a, k) => a + (r[k] ?? 1), 0) / mainKeys.length);
     const F = ns.formulas.gang;
     const d = decideGang(
       {
@@ -101,6 +107,9 @@ export async function main(ns: NS): Promise<void> {
       warfare: d.warfare,
       tasks: taskCounts,
       ascended,
+      /** average main-stat ascension multiplier left after the next install (e.g. 0.975) */
+      installFactor: installFactors.length ? installFactors.reduce((a, b) => a + b, 0) / installFactors.length : 1,
+      installInSec: cfg.installInSec ?? null,
       bought,
       notes: d.notes,
     });

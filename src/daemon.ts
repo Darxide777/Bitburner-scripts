@@ -33,7 +33,7 @@ import { DEFAULT_RECOVERY, type RecoveryConfig } from "./lib/plan/sleeves.js";
 import { DEFAULT_STOCKS, type StockConfig } from "./lib/plan/stocks.js";
 import type { StocksControl, StocksStatus } from "./stocks/manager.js";
 import type { HacknetControl, HacknetStatus } from "./hacknet/manager.js";
-import type { HacknetConfig } from "./lib/plan/hacknet.js";
+import { expectedRunMs, type HacknetConfig } from "./lib/plan/hacknet.js";
 import type { CorpConfig } from "./lib/plan/corp.js";
 import { chooseTarget, cooldownAfter, DEFAULT_INFILTRATION, type InfiltrationConfig } from "./lib/plan/infiltration.js";
 import { CONGRUITY, entropyCost, evaluateGrafts, type GraftRow } from "./lib/plan/grafting.js";
@@ -346,7 +346,14 @@ const GANG_FACTIONS = [
 ];
 
 /** Create the gang when karma allows, keep the manager running, and steer its mode. */
-async function gangModule(ns: NS, data: FactionData, p: Plan, dcfg: DaemonConfig, event: (k: string, msg: string, d?: unknown) => void) {
+async function gangModule(
+  ns: NS,
+  data: FactionData,
+  p: Plan,
+  dcfg: DaemonConfig,
+  event: (k: string, msg: string, d?: unknown) => void,
+  sinceInstallMs = 0,
+) {
   if (!data.gangFaction) {
     if (data.karma > GANG_KARMA) return;
     const owned = new Set([...data.installed, ...data.queued]);
@@ -359,7 +366,12 @@ async function gangModule(ns: NS, data: FactionData, p: Plan, dcfg: DaemonConfig
   }
   // respect → gang-faction rep while it still gates augs we want; otherwise money
   const needRep = (p.repGated[data.gangFaction] ?? 0) > 0;
-  const gcfg: Partial<GangConfig> = { mode: needRep ? "respect" : "money", ...dcfg.gang };
+  // time to the next install: now if one is planned, else the median recent run minus this one
+  const runs = ns.read(DATA.runs).split("\n").filter(Boolean).map((l) => (JSON.parse(l) as { durationMs?: number }).durationMs ?? 0);
+  // past the typical run length there's no sign of an install coming: don't hold (undefined)
+  const left = expectedRunMs(runs, 30 * 60_000) - sinceInstallMs;
+  const installInSec = p.install ? 0 : left > 0 ? left / 1000 : undefined;
+  const gcfg: Partial<GangConfig> = { mode: needRep ? "respect" : "money", installInSec, ...dcfg.gang };
   // no equipment shopping while casino.js is betting (it needs the money to stay put)
   if (ns.isRunning(SCRIPTS.casinoTable, "home")) Object.assign(gcfg, { equipBudget: 0, augBudget: 0 });
   writeJson(ns, DATA.gangConfig, gcfg);
@@ -622,7 +634,7 @@ async function factionsModule(
     lastCompanyKey = routeKey;
     appendJsonl(ns, DATA.company, { t: Date.now(), chosen: p.company, grindScore: p.grindScore, routes: p.companyRoutes, companies: data.companies }, 2000);
   }
-  if (dcfg.manageGang) await gangModule(ns, data, p, dcfg, event);
+  if (dcfg.manageGang) await gangModule(ns, data, p, dcfg, event, m.sinceInstall);
 
   // Stanek before anything can buy an aug: the gift can only be accepted with no augs
   try {

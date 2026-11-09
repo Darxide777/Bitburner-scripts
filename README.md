@@ -118,7 +118,12 @@ the gang in the joined gang faction with the most valuable unowned augs. Every g
   while that faction still gates augs, otherwise **money**
 - cools down the least valuable workers when the wanted penalty passes 3%
 - ascends at most one member per update, once their multiplier gain clears a threshold that
-  shrinks as the multiplier grows
+  shrinks as the multiplier grows. Install penalty (v3): an augment install multiplies every
+  member's banked ascension points by 0.95 (≈ −2.5% multiplier, since mult = √(points/2000)) but
+  leaves unbanked exp alone, so ascending right before an install throws 5% of the new points
+  away. Ascensions are held while an install is planned or the expected one (median recent run
+  length − time since the last install) is under 10 min (`holdAscendSec`); `data/gang.txt`
+  shows each install's projected effect (`installFactor`, from `getInstallResult`).
 
 **Sleeves** (`lib/plan/sleeves.ts`, `lib/sleeves.ts`). One recovery slot rotates by shock: the
 most-shocked sleeve recovers (it produces least, so benching it costs least) and hands over once
@@ -335,7 +340,7 @@ faction-working.
       territory warfare, ascension
 - [x] Grafting: per-aug value vs. Entropy and time, logged every 10 min
 - [ ] Grafting: act on it (graft when net/hour beats the player's current activity)
-- [ ] Gang: account for v3's install penalty on ascension multipliers (`getInstallResult`)
+- [x] Gang: v3 install penalty — hold ascensions before installs, report the projected loss
 - [x] Hacknet servers: data-priced hash spending, payback-based production
 - [ ] Hacknet: value SP, gym/study and company favor
 - [x] Bladeburner: join (after Stanek), skills, city, stamina/chaos control, contracts/ops/black ops
