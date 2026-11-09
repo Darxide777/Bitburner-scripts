@@ -1,7 +1,7 @@
 // Corporation decision tests (run against the compiled output: `npm test`).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { optimalBoost, splitJobs, offerPlateaued, cheapest, DEFAULT_CORP, JOBS } from "../dist/lib/plan/corp.js";
+import { optimalBoost, splitJobs, offerPlateaued, cheapest, productStep, dividendFor, bribeAmount, DEFAULT_CORP, JOBS } from "../dist/lib/plan/corp.js";
 
 // Agriculture's factors and the materials' sizes
 const AGRI = [
@@ -54,4 +54,31 @@ test("cheapest affordable purchase", () => {
   const o = [{ what: "a", cost: 5 }, { what: "b", cost: 2 }, { what: "c", cost: Infinity }, { what: "d", cost: 50 }];
   assert.equal(cheapest(o, 10).what, "b");
   assert.equal(cheapest(o, 1), null);
+});
+
+test("product pipeline: wait while developing, fill free slots, then retire the weakest", () => {
+  assert.deepEqual(productStep([], 3, "Tob-"), { kind: "make", name: "Tob-1" });
+  assert.deepEqual(productStep([{ name: "Tob-1", progress: 40, rating: 0 }], 3, "Tob-"), { kind: "wait" });
+  assert.deepEqual(productStep([{ name: "Tob-1", progress: 100, rating: 5 }], 3, "Tob-"), { kind: "make", name: "Tob-2" });
+  const full = [
+    { name: "Tob-4", progress: 100, rating: 9 },
+    { name: "Tob-5", progress: 100, rating: 2 },
+    { name: "Tob-6", progress: 100, rating: 7 },
+  ];
+  assert.deepEqual(productStep(full, 3, "Tob-"), { kind: "make", name: "Tob-7", discontinue: "Tob-5" });
+});
+
+test("dividends: low while growth is affordable, high once saturated", () => {
+  assert.equal(dividendFor(0), DEFAULT_CORP.dividendRate);
+  assert.equal(dividendFor(DEFAULT_CORP.saturatedCycles), DEFAULT_CORP.maxDividendRate);
+});
+
+test("bribes: only idle funds of a big enough corp, capped by the gap and the fund share", () => {
+  const C = { bribeThreshold: 100e12, bribeAmountPerReputation: 1e9 };
+  const sat = DEFAULT_CORP.saturatedCycles;
+  assert.equal(bribeAmount(1000, 1e15, 50e12, sat, C), 0, "valuation under the threshold");
+  assert.equal(bribeAmount(1000, 1e15, 200e12, 0, C), 0, "still growing");
+  assert.equal(bribeAmount(1000, 1e15, 200e12, sat, C), 1000 * 1e9, "the whole gap: $1t < 10% of funds");
+  assert.equal(bribeAmount(1e9, 1e15, 200e12, sat, C), 1e14, "capped at 10% of funds");
+  assert.equal(bribeAmount(0, 1e15, 200e12, sat, C), 0);
 });

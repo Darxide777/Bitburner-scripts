@@ -20,8 +20,20 @@ export interface CorpConfig {
   /** offer counts as plateaued when its growth over `plateauCycles` is below this */
   plateauGrowth: number;
   plateauCycles: number;
-  /** dividend rate once public (share of profit paid to you) */
+  /** dividend rate once public while the corp still has growth to buy… */
   dividendRate: number;
+  /** …and once it's saturated (no affordable growth purchase for `saturatedCycles` cycles) */
+  maxDividendRate: number;
+  saturatedCycles: number;
+  /** product division: start once funds ≥ this × its starting cost */
+  productStartMult: number;
+  /** design and marketing investment per new product, as a share of funds (min $1b each) */
+  productInvestFrac: number;
+  /** job split for the product development city, and for the support (research) cities */
+  devJobs: Record<Job, number>;
+  rdJobs: Record<Job, number>;
+  /** bribes: share of funds per cycle, only when saturated and valuation ≥ the game's threshold */
+  bribeFrac: number;
   /** keep energy / morale above this fraction of their max */
   minEnergy: number;
   minMorale: number;
@@ -37,6 +49,13 @@ export const DEFAULT_CORP: CorpConfig = {
   plateauGrowth: 0.01,
   plateauCycles: 5,
   dividendRate: 0.1,
+  maxDividendRate: 0.5,
+  saturatedCycles: 20,
+  productStartMult: 2,
+  productInvestFrac: 0.01,
+  devJobs: { Operations: 0.25, Engineer: 0.3, Business: 0.1, Management: 0.25, "Research & Development": 0.1 },
+  rdJobs: { Operations: 0.15, Engineer: 0.15, Business: 0.05, Management: 0.15, "Research & Development": 0.5 },
+  bribeFrac: 0.1,
   minEnergy: 0.95,
   minMorale: 0.95,
 };
@@ -118,4 +137,57 @@ export interface Purchase {
 export function cheapest(options: Purchase[], budget: number): Purchase | null {
   const ok = options.filter((o) => Number.isFinite(o.cost) && o.cost > 0 && o.cost <= budget).sort((a, b) => a.cost - b.cost);
   return ok[0] ?? null;
+}
+
+// ---------- product division (phase 2) ----------
+
+/** Products are designed in this city; its office gets the development job split. */
+export const DEV_CITY = "Aevum";
+/** Extra research for product divisions (after the shared order). */
+export const PRODUCT_RESEARCH = ["uPgrade: Fulcrum", "uPgrade: Capacity.I", "uPgrade: Capacity.II"];
+/** Plants from Agriculture feed Tobacco: export what the importer uses (+ a tenth of its stock). */
+export const EXPORT_AMOUNT = "(IPROD+IINV/10)*(-1)";
+
+export interface ProductInfo {
+  name: string;
+  progress: number;
+  rating: number;
+}
+
+/**
+ * Product pipeline: wait while one is in development; with a free slot make the next;
+ * with all slots full, discontinue the lowest-rated finished one first.
+ */
+export function productStep(
+  products: ProductInfo[],
+  maxProducts: number,
+  prefix: string,
+): { kind: "wait" } | { kind: "make"; name: string; discontinue?: string } {
+  if (products.some((p) => p.progress < 100)) return { kind: "wait" };
+  const nums = products.map((p) => Number(p.name.slice(prefix.length))).filter(Number.isFinite);
+  const name = `${prefix}${(nums.length ? Math.max(...nums) : 0) + 1}`;
+  if (products.length < maxProducts) return { kind: "make", name };
+  const worst = [...products].sort((a, b) => a.rating - b.rating)[0];
+  return { kind: "make", name, discontinue: worst.name };
+}
+
+/** Dividend rate: low while there's growth to buy, high once the corp is saturated. */
+export function dividendFor(cyclesWithoutGrowth: number, cfg: CorpConfig = DEFAULT_CORP): number {
+  return cyclesWithoutGrowth >= cfg.saturatedCycles ? cfg.maxDividendRate : cfg.dividendRate;
+}
+
+/**
+ * Bribe for a faction's rep gap with idle funds: only when saturated and the valuation clears
+ * the game's threshold; at most bribeFrac of funds; 0 = don't.
+ */
+export function bribeAmount(
+  repGap: number,
+  funds: number,
+  valuation: number,
+  cyclesWithoutGrowth: number,
+  constants: { bribeThreshold: number; bribeAmountPerReputation: number },
+  cfg: CorpConfig = DEFAULT_CORP,
+): number {
+  if (repGap <= 0 || valuation < constants.bribeThreshold || cyclesWithoutGrowth < cfg.saturatedCycles) return 0;
+  return Math.max(0, Math.min(repGap * constants.bribeAmountPerReputation, funds * cfg.bribeFrac));
 }

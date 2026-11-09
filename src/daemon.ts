@@ -246,7 +246,15 @@ export async function main(ns: NS): Promise<void> {
     // ---- corporation (SF3 / BN3): creation waits for spare cash and no casino bets ----
     const corpOk = cfg.manageCorp && !!s && ((s.sourceFiles["3"] ?? 0) > 0 || s.node === 3);
     if (corpOk) {
-      const ctl: CorpControl = { allowCreate: !ns.isRunning(SCRIPTS.casinoTable, "home"), cfg: cfg.corp };
+      // bribe target: the rep gap of the faction being ground, else the biggest pending gap
+      // (bribes, like donations, need a faction that offers work)
+      const gaps = (current?.pending ?? []).filter((c) => c.repGap > 0 && c.donation === 0);
+      const gap = gaps.find((c) => c.faction === current?.work?.faction) ?? [...gaps].sort((a, b) => b.repGap - a.repGap)[0];
+      const ctl: CorpControl = {
+        allowCreate: !ns.isRunning(SCRIPTS.casinoTable, "home"),
+        bribeTarget: gap ? { faction: gap.faction, repGap: gap.repGap } : null,
+        cfg: cfg.corp,
+      };
       writeJson(ns, DATA.corpConfig, ctl);
       if (!ns.isRunning(SCRIPTS.corpManager, "home") && ns.exec(SCRIPTS.corpManager, "home")) event("corp", "started corporation manager");
     }

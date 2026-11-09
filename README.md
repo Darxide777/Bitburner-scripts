@@ -195,7 +195,20 @@ Cores, Real Estate) in the optimal mix for `boostFrac` (50%) of each warehouse �
 maximum of Π(1 + 0.002·qᵢ)^fᵢ for the space → research (Hi-Tech R&D Lab, Market-TA.I/II, AutoBrew,
 AutoPartyManager…) → the cheapest of warehouse/office/corp upgrades/AdVert within 20% of funds →
 investment rounds 1–2, each accepted once its offer has stopped growing (<1% over 5 cycles) →
-then go public selling no shares and pay `dividendRate` (10%) of profit to you.
+then go public selling no shares and pay dividends.
+
+Phase 2, once Agriculture is in all six cities and funds reach 2× Tobacco's starting cost: a
+**Tobacco** product division set up the same way, with Aevum as the development office (job
+split weighted to engineering/management) and research-heavy support offices. Products are
+developed one at a time in Aevum (1% of funds each for design and marketing, min $1b); with
+every slot full, the lowest-rated finished product is retired for the next. Finished products
+sell everywhere at MAX/MP, then by Market-TA.II once researched (product research adds
+uPgrade: Fulcrum / Capacity.I–II). With the Export unlock, Agriculture's Plants go to Tobacco
+in every shared city (`(IPROD+IINV/10)*(-1)`: what the importer uses) and Tobacco's Smart Supply
+prefers imports. **Dividends** follow the data: `dividendRate` (10%) while the corp still has
+affordable growth purchases, `maxDividendRate` (50%) after `saturatedCycles` (20) cycles without
+one. **Bribes**: the game needs a $100t valuation and pays 1 rep per $1b, so only a saturated corp
+bribes, with ≤10% of funds per cycle, for the planner's current rep gap.
 
 **Hacknet** (`lib/plan/hacknet.ts` decides, `hacknet/manager.ts` acts; needs SF9). Every hash
 upgrade is priced in money-equivalent $ per hash from measured data: Sell for Money ($1m / 4
@@ -406,7 +419,7 @@ it in the hacking reserve, and `tasks/restart.js` restarts it on every new build
 - [x] Stock market: 4S forecasts, longs + shorts, liquidation before install
 - [x] Stock market: pre-4S trading from price history, self-disabling on a losing record
 - [x] Corporation: Agriculture, boost materials, research, investment rounds, dividends
-- [ ] Corporation: product division (Tobacco), exports, dividend rate from data
+- [x] Corporation phase 2: Tobacco products, Plants exports, data-driven dividends, bribes
 - [x] Infiltration: model-reading autoplayer, rep-per-second trigger vs. faction work
 - [x] IPvGO cheats (SF14.2): played when their search-valued EV beats the normal move
 - [x] Endgame: Daedalus → The Red Pill → w0r1d_d43m0n, then auto-continue into the next BN12 level
