@@ -40,7 +40,7 @@ export const DEFAULT_GO: GoConfig = {
   timeMs: { "5": 200, "7": 350, "9": 500, "13": 900 },
   explore: 0.3,
   alpha: 0.3,
-  rotateMs: 15 * 60_000,
+  rotateMs: 0, // data-driven by default; e.g. 15 * 60_000 to rotate
 };
 
 /** Whose turn it is in rotation mode, and since when. */

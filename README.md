@@ -170,10 +170,18 @@ product of the powers of every booster touching it. Consequences:
   (~1 s, within ~1% of much bigger searches) and a hill-climb polish. Default weights favor
   Rep, then Hacking, Hacking Speed and Hacking Money. Installs keep the layout but wipe charges,
   so a better layout is only applied when the board is empty or uncharged.
-- **Charging** happens once per install: each fragment is charged `rounds` (5) times by a single
-  process on home using `ramShare` (50%) of home RAM. ln-scaling makes 50% ≈ 94% of a full-home
-  charge. RAM is reclaimed from hacking by raising the home reserve until the block is free.
-  After 5 minutes, it starts with whatever ≥25% is available.
+- **Charging** has two modes, one process at a time, on the server with the most effective
+  threads: home's `ramShare` (50%) with its core bonus, or a whole cloud server.
+  - *Peak*: `rounds` (5) calls per fragment, ~25 s, whenever the biggest block is ≥2× the
+    fragments' highestCharge (install, home upgrades, bigger cloud servers).
+  - *Continuous* (otherwise): charges forever on the biggest block that's ≤ `maxPoolShare` (25%)
+    of all RAM, because numCharge keeps growing (~1 per full-size call): ×1.01 after 5 rounds,
+    ×1.4 after an hour, ×1.75 after a day. Early in a node, home is most of the RAM, so it only
+    peak-charges; later one cloud server becomes the dedicated charger (moved when a block ≥1.5×
+    appears). `"stanek": {"continuous": false}` restores peak-only.
+  RAM is reclaimed from hacking by raising the home reserve or telling the hacking manager to
+  skip the charger's server. After 5 minutes it starts with whatever ≥25% is free. Status
+  shows each fragment's highestCharge and numCharge.
 - **Acceptance**: the gift can only be accepted before any non-NeuroFlux aug, so the daemon
   accepts it at BitNode start, before anything can buy augs.
 

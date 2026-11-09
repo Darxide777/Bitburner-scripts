@@ -22,6 +22,8 @@ export interface HackConfig {
   spacing: number;
   /** Fraction of leftover RAM to spend on share() (0 disables). */
   share: number;
+  /** servers to leave alone entirely (e.g. the Stanek charger's) */
+  skipHosts?: string[];
 }
 export const DEFAULT_HACK_CONFIG: HackConfig = { homeReserve: 32, maxTargets: 6, spacing: 60, share: 0 };
 
@@ -73,7 +75,7 @@ export async function main(ns: NS): Promise<void> {
     // ---- RAM pool ----
     const pool: Pool = new Map();
     for (const h of hosts) {
-      if (h.startsWith("hacknet-") || !ns.hasRootAccess(h)) continue;
+      if (h.startsWith("hacknet-") || !ns.hasRootAccess(h) || cfg.skipHosts?.includes(h)) continue;
       const max = ns.getServerMaxRam(h);
       if (max <= 0) continue;
       if (!ready.has(h) || !ns.fileExists(SCRIPTS.weaken, h)) {

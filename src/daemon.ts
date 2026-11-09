@@ -189,6 +189,7 @@ export async function main(ns: NS): Promise<void> {
       homeReserve: reserve,
       // lend spare RAM to factions while we are working for one
       share: s?.work?.type === "FACTION" ? 1 : 0,
+      skipHosts: stanekStatus?.reserveHost ? [stanekStatus.reserveHost] : [],
     };
     writeJson(ns, DATA.hackConfig, hackCfg);
     if (!ns.isRunning(SCRIPTS.hackManager, "home")) {
