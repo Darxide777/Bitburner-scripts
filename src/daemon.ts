@@ -36,6 +36,7 @@ import type { HacknetControl, HacknetStatus } from "./hacknet/manager.js";
 import type { HacknetConfig } from "./lib/plan/hacknet.js";
 import type { CorpConfig } from "./lib/plan/corp.js";
 import { chooseTarget, cooldownAfter, DEFAULT_INFILTRATION, type InfiltrationConfig } from "./lib/plan/infiltration.js";
+import { CONGRUITY, entropyCost, evaluateGrafts, type GraftRow } from "./lib/plan/grafting.js";
 import type { InfiltrationControl, InfiltrationState } from "./infiltrate.js";
 import type { CorpControl, CorpStatus } from "./corp/manager.js";
 
@@ -62,6 +63,8 @@ interface DaemonConfig {
   contractsEveryMs: number;
   /** Trade stocks with 4S data (stocks/manager.js, ~37 GB) once home has stocksMinHomeGB. */
   /** Corporation (corp/manager.js, needs SF3 or BN3): Agriculture, investors, dividends. */
+  /** Log graftable augs (value vs. entropy and time) every 10 min; no grafting yet. */
+  logGrafting: boolean;
   /** Infiltration autoplayer (infiltrate.js) when it beats faction work for the grind faction. */
   manageInfiltration: boolean;
   infiltration: Partial<InfiltrationConfig>;
@@ -95,6 +98,7 @@ const DEFAULTS: DaemonConfig = {
   gang: {},
   manageContracts: true,
   contractsEveryMs: 5 * 60_000,
+  logGrafting: true,
   manageInfiltration: true,
   infiltration: {},
   manageCorp: true,
@@ -375,6 +379,62 @@ let bladeburnerWanted = false;
  * Simulacrum, and owning it blocks accepting the gift for the rest of the BitNode.
  */
 let lastSleeveLog = 0;
+let lastGraftLog = 0;
+/** latest grafting evaluation (dashboard) */
+let graftTop: GraftRow | null = null;
+
+/**
+ * Every 10 min: value each graftable aug against one Entropy stack and its graft time, next
+ * to the faction route's ETA, and log it (data/grafting.txt). Logging only, no grafting yet.
+ */
+async function graftingModule(ns: NS, data: FactionData, p: Plan, dcfg: DaemonConfig, cfg: PlanConfig) {
+  if (!dcfg.logGrafting || Date.now() - lastGraftLog < 10 * 60_000) return;
+  if (!((data.sourceFiles["10"] ?? 0) > 0 || data.node === 10)) return;
+  lastGraftLog = Date.now();
+  const augs = (await call<string[]>(ns, "grafting.getGraftableAugmentations")) ?? [];
+  if (!augs.length) return;
+  const one = augs.map((a) => [a]);
+  const prices = await callEach<number>(ns, "grafting.getAugmentationGraftPrice", one);
+  const times = await callEach<number>(ns, "grafting.getAugmentationGraftTime", one);
+  const unknown = augs.filter((a) => !data.augs[a]);
+  const extra = await callEach<Record<string, number>>(ns, "singularity.getAugmentationStats", unknown.map((a) => [a]));
+  const statsOf = new Map(unknown.map((a, k) => [a, extra[k] ?? {}]));
+  // the faction route this run: ready now (0), rep-gated (its ETA), or none (null)
+  const eta = new Map<string, number>();
+  for (const c of p.ready) eta.set(c.aug, 0);
+  for (const c of p.pending) eta.set(c.aug, Number.isFinite(c.repEta) ? c.repEta : 1e9);
+  const entropy = (await call<{ entropy: number }>(ns, "getPlayer"))?.entropy ?? 0;
+  const hasCongruity = data.installed.includes(CONGRUITY);
+  const rows = evaluateGrafts(
+    augs.map((a, k) => ({
+      aug: a,
+      price: prices[k] ?? Infinity,
+      timeMs: times[k] ?? Infinity,
+      stats: data.augs[a]?.stats ?? statsOf.get(a) ?? {},
+      factionEtaSec: eta.has(a) ? eta.get(a)! : null,
+    })),
+    cfg.weights,
+    { hasCongruity, entropy, bonus: cfg.augBonus },
+  );
+  graftTop = rows[0] ?? null;
+  const work = p.work?.faction;
+  appendJsonl(
+    ns,
+    DATA.grafting,
+    {
+      t: Date.now(),
+      entropy,
+      entropyCost: hasCongruity ? 0 : entropyCost(cfg.weights),
+      hasCongruity,
+      money: data.money,
+      workRepPerSec: work ? (data.factions[work]?.workRepPerSec ?? 0) : 0,
+      graftable: augs.length,
+      rows: rows.slice(0, 25),
+    },
+    2000,
+  );
+}
+
 let infilEstimate: { t: number; repPerSec: number; target: string } = { t: 0, repPerSec: 0, target: "" };
 
 /**
@@ -563,6 +623,7 @@ async function factionsModule(
   }
 
   await bladeburnerModule(ns, data, p, dcfg, casinoRunning, event);
+  await graftingModule(ns, data, p, dcfg, cfg);
 
   // sleeves first, so none of them is sitting on the faction the player is about to work for
   if (dcfg.manageSleeves && s.sleeves > 0) {
@@ -716,6 +777,10 @@ function draw(
     L.push(`  ${pad(f, 24)} ${pad(num(rep), 9, true)} rep  ${pad(num(r.rep[f] ?? 0), 8, true)}/s  favor ${num(s.favor[f] ?? 0, 0)}`);
   if (s.invites.length) L.push(`  invites: ${s.invites.join(", ")}`);
 
+  if (graftTop)
+    L.push(
+      `grafting (log only): best ${graftTop.aug} net ${graftTop.net.toFixed(2)} in ${graftTop.hours.toFixed(1)}h (${graftTop.netPerHour.toFixed(3)}/h)${graftTop.factionEtaH === null ? ", no faction offers it" : ""}`,
+    );
   const co = readJson<Partial<CorpStatus>>(ns, DATA.corp, {});
   if (co.t && Date.now() - co.t < 300_000)
     L.push(

@@ -15,6 +15,7 @@ export const DATA = {
   goConfig: "data/go-config.txt", // IPvGO tunables
   contracts: "data/contracts.txt", // coding contracts: totals + ones we failed (never retried)
   contractsSelftest: "data/contracts-selftest.txt", // per-build check of every solver on dummy contracts
+  grafting: "data/grafting.txt", // JSONL every 10 min: graftable augs valued vs. entropy and time
   infiltration: "data/infiltration.txt", // infiltration runs: measured rep/s per location
   infiltrationConfig: "data/infiltration-config.txt", // infiltration control, written by the daemon
   corp: "data/corp.txt", // corporation manager status

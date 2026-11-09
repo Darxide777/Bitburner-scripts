@@ -201,6 +201,15 @@ waits 10 min, doubling per failure in a row (max 2 h). While it
 runs the daemon leaves work, travel and installs alone. This deliberately bypasses the game's
 anti-automation; `"manageInfiltration": false` turns it off.
 
+**Grafting** (`lib/plan/grafting.ts`, logging only for now; needs SF10). From the game's source:
+a grafted aug applies at once and lasts until the BitNode ends, but each graft adds an Entropy
+stack that lasts as long — every gain multiplier ×0.98, hacknet costs ÷0.98 — unless you own
+The Congruity Implant (grafting it also clears all Entropy). Grafting takes your time. Every
+10 min the daemon logs to `data/grafting.txt`, for each graftable aug: graft price and hours,
+its value in the planner's units, `net` = value − one Entropy stack (priced with the same
+weights), net per hour, and the faction route's ETA this run (null = no faction offers it);
+Congruity is credited with removing your current stacks. The dashboard shows the best row.
+
 **Coding contracts** (`lib/contracts.ts`, pure and unit-tested). All 30 contract types have a
 solver; Hamming codes and LZ compression follow the game's own algorithms, since answers must
 match its format/length. Every 5 minutes `tasks/contracts.js` (~22 GB) solves what it finds on
@@ -305,6 +314,8 @@ faction-working.
 - [x] Sleeves: karma for the gang, then one per grind faction; shock recovery; sleeve augs
 - [x] Gang: creation, recruit, equipment, training, respect/money mode, wanted control,
       territory warfare, ascension
+- [x] Grafting: per-aug value vs. Entropy and time, logged every 10 min
+- [ ] Grafting: act on it (graft when net/hour beats the player's current activity)
 - [ ] Gang: account for v3's install penalty on ascension multipliers (`getInstallResult`)
 - [x] Hacknet servers: data-priced hash spending, payback-based production
 - [ ] Hacknet: value SP, gym/study and company favor
