@@ -328,6 +328,24 @@ faction-working.
 | `data/runs.txt` | JSONL, one line per augment install / node reset: duration, peak income, peak rep/s |
 | `data/hack.txt` | hacking manager status: targets, batches, expected $/s |
 
+## User modules
+
+A slot for your own long-running scripts, run alongside the built-in managers:
+
+1. Copy `src/user/template.ts` to `src/user/<name>.ts` and write your logic (the sync server
+   builds and pushes it like everything else).
+2. List it in `data/config.txt`: `{"userModules": [{"script": "user/<name>.js", "args": [], "minHomeGB": 0}]}`.
+
+The daemon then starts it whenever it isn't running (with enough home RAM), holds home RAM for
+it in the hacking reserve, and `tasks/restart.js` restarts it on every new build. To cooperate:
+
+- read `data/context.txt` (`DaemonContext` in `daemon.ts`) each loop: `uiBusy` (casino.js /
+  infiltrate.js own the screen, so don't navigate or change work), `installPlanned`, `money`,
+  `homeFree`, `workFaction`, `sinceInstallMs`, …
+- write `data/user-reserve.txt` as `{ "hosts": [...] }` to keep the hacking manager off servers
+  your module uses
+- keep its RAM low by routing expensive API calls through `lib/call.ts`
+
 ## Roadmap
 
 - [x] Tooling: TS build, Remote API sync with type refresh + telemetry pull

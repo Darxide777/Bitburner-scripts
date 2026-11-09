@@ -63,6 +63,11 @@ interface DaemonConfig {
   contractsEveryMs: number;
   /** Trade stocks with 4S data (stocks/manager.js, ~37 GB) once home has stocksMinHomeGB. */
   /** Corporation (corp/manager.js, needs SF3 or BN3): Agriculture, investors, dividends. */
+  /**
+   * Your own long-running scripts (e.g. under src/user/): the daemon starts each one when it's
+   * missing, holds home RAM for it, and restarts it on new builds. See README "User modules".
+   */
+  userModules: UserModule[];
   /** Log graftable augs (value vs. entropy and time) every 10 min; no grafting yet. */
   logGrafting: boolean;
   /** Infiltration autoplayer (infiltrate.js) when it beats faction work for the grind faction. */
@@ -98,6 +103,7 @@ const DEFAULTS: DaemonConfig = {
   gang: {},
   manageContracts: true,
   contractsEveryMs: 5 * 60_000,
+  userModules: [],
   logGrafting: true,
   manageInfiltration: true,
   infiltration: {},
@@ -113,6 +119,30 @@ const DEFAULTS: DaemonConfig = {
   bladeburner: {},
   bladeburnerMinHomeGB: 512,
 };
+
+export interface UserModule {
+  /** script path on home, e.g. "user/mine.js" */
+  script: string;
+  args?: (string | number | boolean)[];
+  /** don't start it below this much home RAM */
+  minHomeGB?: number;
+}
+
+/** What user modules can read each tick (data/context.txt). */
+export interface DaemonContext {
+  t: number;
+  node: number;
+  money: number;
+  hackLevel: number;
+  homeRam: number;
+  homeFree: number;
+  /** a UI-driving script (casino.js / infiltrate.js) owns the screen: don't navigate */
+  uiBusy: boolean;
+  /** the faction the player works for, if any; an install about to happen */
+  workFaction: string | null;
+  installPlanned: boolean;
+  sinceInstallMs: number;
+}
 
 interface DaemonState {
   lastAugReset: number;
@@ -231,6 +261,13 @@ export async function main(ns: NS): Promise<void> {
     if (s && cfg.casino && (s.earned.casino ?? 0) < CASINO_CAP) wanted.push(SCRIPTS.casinoTable);
     // plus room for the Stanek charger while it waits for a big enough block of home RAM
     if (corpOk) wanted.push(SCRIPTS.corpManager);
+    // ---- user modules ----
+    for (const um of cfg.userModules ?? []) {
+      if (!ns.fileExists(um.script, "home") || ns.getServerMaxRam("home") < (um.minHomeGB ?? 0)) continue;
+      wanted.push(um.script);
+      if (!ns.isRunning(um.script, "home", ...(um.args ?? [])) && ns.exec(um.script, "home", 1, ...(um.args ?? [])))
+        event("user", `started user module ${um.script}`);
+    }
     // room for infiltrate.js (+ its proxies) while the daemon wants it running
     if (readJson<{ active?: boolean }>(ns, DATA.infiltrationConfig, {}).active) wanted.push(SCRIPTS.infiltrate);
     // corp calls run through ~22 GB proxies (corporation functions cost 10–20 GB each)
@@ -240,7 +277,7 @@ export async function main(ns: NS): Promise<void> {
       homeReserve: reserve,
       // lend spare RAM to factions while we are working for one
       share: s?.work?.type === "FACTION" ? 1 : 0,
-      skipHosts: stanekStatus?.reserveHosts ?? [],
+      skipHosts: [...(stanekStatus?.reserveHosts ?? []), ...(readJson<{ hosts?: string[] }>(ns, DATA.userReserve, {}).hosts ?? [])],
     };
     writeJson(ns, DATA.hackConfig, hackCfg);
     if (!ns.isRunning(SCRIPTS.hackManager, "home")) {
@@ -270,6 +307,19 @@ export async function main(ns: NS): Promise<void> {
     if (s) {
       const hackStatus = readJson<{ expectedPerSec?: number; poolTotal?: number }>(ns, DATA.hack, {});
       writeJson(ns, DATA.status, { snapshot: s, metrics: m, hack: hackStatus, plan: current, stanek: stanekStatus });
+      const ctx: DaemonContext = {
+        t: Date.now(),
+        node: s.node,
+        money: s.money,
+        hackLevel: s.hackLevel,
+        homeRam: s.homeRam,
+        homeFree: ns.getServerMaxRam("home") - ns.getServerUsedRam("home"),
+        uiBusy: ns.isRunning(SCRIPTS.casinoTable, "home") || ns.isRunning(SCRIPTS.infiltrate, "home"),
+        workFaction: current?.work?.faction ?? null,
+        installPlanned: !!current?.install,
+        sinceInstallMs: m.sinceInstall,
+      };
+      writeJson(ns, DATA.context, ctx);
       if (Date.now() - lastMetricsLine > 60_000) {
         lastMetricsLine = Date.now();
         appendJsonl(ns, DATA.metrics, metricsLine(s, m, hackStatus), 10_000);
