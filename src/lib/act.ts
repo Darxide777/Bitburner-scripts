@@ -4,6 +4,7 @@
 // as the biggest recurring task it set the home RAM reserve).
 import type { NS } from "@ns";
 import { call, callEach } from "./call.js";
+import { KARMA_PER_SEC } from "./plan/sleeves.js";
 
 export interface ActArgs {
   join: string[];
@@ -72,9 +73,13 @@ export async function act(ns: NS, a: ActArgs, city: string): Promise<string[]> {
     const same = cur?.type === "FACTION" && cur.factionName === w.faction && cur.factionWorkType === w.type;
     if (!same && (await call<boolean>(ns, S + "workForFaction", w.faction, w.type, w.focus))) done.push(`working for ${w.faction} (${w.type})`);
   } else if (a.crime) {
-    // fall back to a safer crime when the chosen one would mostly fail
+    // karma per second (only successes count): Homicide 3/3 s vs Mug 0.25/4 s, so Mug only
+    // when Homicide's chance is under ~6% of Mug's
     let crime = a.crime;
-    if (((await call<number>(ns, S + "getCrimeChance", crime)) ?? 0) < 0.5) crime = "Mug";
+    if (crime === "Homicide") {
+      const [h, m] = await callEach<number>(ns, S + "getCrimeChance", [["Homicide"], ["Mug"]]);
+      if ((h ?? 0) * KARMA_PER_SEC.Homicide < (m ?? 1) * KARMA_PER_SEC.Mug) crime = "Mug";
+    }
     if (!(cur?.type === "CRIME" && cur.crimeType === crime)) {
       await call(ns, S + "commitCrime", crime, false);
       done.push(`committing ${crime}`);

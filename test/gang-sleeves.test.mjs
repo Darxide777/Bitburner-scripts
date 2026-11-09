@@ -62,9 +62,15 @@ test("does not ascend below threshold", () => {
 // ---------- sleeves ----------
 const sleeve = (i, o = {}) => ({ i, shock: 0, current: null, homicideChance: 0.9, gains: {}, ...o });
 
-test("sleeves all do crime for karma when there is no gang yet", () => {
-  const a = decideSleeves({ sleeves: [sleeve(0), sleeve(1, { homicideChance: 0.2 })], needKarma: true, targets: ["X"], playerFaction: null });
-  assert.deepEqual(a, [{ kind: "crime", crime: "Homicide" }, { kind: "crime", crime: "Mug" }]);
+test("sleeves do the crime with the most karma per second when there is no gang yet", () => {
+  // Homicide 1 karma/s × chance vs Mug 0.0625 × chance: Homicide even at 20%; Mug only below ~6%
+  const a = decideSleeves({
+    sleeves: [sleeve(0), sleeve(1, { homicideChance: 0.2 }), sleeve(2, { homicideChance: 0.05, mugChance: 0.9 })],
+    needKarma: true,
+    targets: ["X"],
+    playerFaction: null,
+  });
+  assert.deepEqual(a, [{ kind: "crime", crime: "Homicide" }, { kind: "crime", crime: "Homicide" }, { kind: "crime", crime: "Mug" }]);
 });
 
 test("one sleeve per target faction, best sleeve each, never the player's faction", () => {

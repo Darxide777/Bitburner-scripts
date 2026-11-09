@@ -27,6 +27,8 @@ export interface SleeveInfo {
   current: Assignment | null;
   homicideChance: number;
   heistChance: number;
+  /** success chance at Mug (default 1: only used to compare karma rates) */
+  mugChance?: number;
   /** rep/s by faction then work type */
   gains: Record<string, Record<string, number>>;
   /** Bladeburner contract → estimated success chance (min) for this sleeve */
@@ -65,9 +67,18 @@ export interface SleeveInput {
   bladeburner?: BladeburnerSleeveInput | null;
 }
 
-/** Best karma per second (no gang yet). */
+/**
+ * Karma per second at full success, from the game's crime table (karma is only granted on
+ * success): Homicide 3 karma / 3 s, Mug 0.25 / 4 s. So Homicide wins whenever its chance is
+ * above ~6% of Mug's — not just past 50%.
+ */
+export const KARMA_PER_SEC: Record<string, number> = { Homicide: 3 / 3, Mug: 0.25 / 4 };
+
+/** Best expected karma per second (no gang yet): karma × success chance ÷ time. */
 export function karmaCrime(s: SleeveInfo): string {
-  return s.homicideChance >= 0.5 ? "Homicide" : "Mug";
+  const homicide = KARMA_PER_SEC.Homicide * s.homicideChance;
+  const mug = KARMA_PER_SEC.Mug * (s.mugChance ?? 1);
+  return homicide >= mug ? "Homicide" : "Mug";
 }
 
 /**

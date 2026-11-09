@@ -153,7 +153,9 @@ the gang in the joined gang faction with the most valuable unowned augs. Every g
 **Sleeves** (`lib/plan/sleeves.ts`, `lib/sleeves.ts`). One recovery slot rotates by shock: the
 most-shocked sleeve recovers (it produces least, so benching it costs least) and hands over once
 another sleeve is 5 points worse (`"sleeveRecovery": {"slots", "margin", "mode": "rotate"|"spare"|"off"}`).
-With no gang yet, the others commit Homicide (Mug while Homicide would mostly fail), which
+With no gang yet, the others commit the crime with the most expected karma per second (karma is
+only granted on success: Homicide 3 per 3 s vs Mug 0.25 per 4 s, so Homicide wins above ~6% of
+Mug's success chance), which
 minimizes time-to-gang. Otherwise each grindable faction gets its best-suited sleeve, never the
 faction the player is working for; then Bladeburner contracts (one sleeve per contract, ≥70%
 success) while in the division with black ops left; then favor building; leftovers do crime.

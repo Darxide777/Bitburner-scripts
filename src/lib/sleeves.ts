@@ -95,15 +95,16 @@ export async function manageSleeves(
   const chances = await callEach<number>(
     ns,
     "formulas.work.crimeSuccessChance",
-    idx.flatMap((i) => [[persons[i], "Homicide"], [persons[i], "Heist"]]),
+    idx.flatMap((i) => [[persons[i], "Homicide"], [persons[i], "Heist"], [persons[i], "Mug"]]),
   );
 
   const sleeves: SleeveInfo[] = idx.map((i) => ({
     i,
     shock: persons[i]?.shock ?? 0,
     current: normalise(tasks[i] ?? null),
-    homicideChance: chances[2 * i] ?? 0,
-    heistChance: chances[2 * i + 1] ?? 0,
+    homicideChance: chances[3 * i] ?? 0,
+    heistChance: chances[3 * i + 1] ?? 0,
+    mugChance: chances[3 * i + 2] ?? 1,
     gains: {},
   }));
   combos.forEach(([i, f, w], k) => {
