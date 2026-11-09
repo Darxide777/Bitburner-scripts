@@ -15,7 +15,7 @@ import { appendJsonl, readJson, writeJson } from "./lib/io.js";
 import { MetricsTracker, type Metrics } from "./lib/metrics.js";
 import { allHosts, portOpenerCount, rootAll } from "./lib/net.js";
 import { BUILD_MARKER, DATA, GANG_KARMA, SCRIPTS } from "./lib/paths.js";
-import { call } from "./lib/call.js";
+import { call, callEach } from "./lib/call.js";
 import { collectFactionData } from "./lib/plan/collect.js";
 import { NFG, type FactionData } from "./lib/plan/data.js";
 import { augValue, DEFAULT_PLAN, plan as makePlan, type Plan, type PlanConfig } from "./lib/plan/factions.js";
@@ -35,6 +35,8 @@ import type { StocksControl, StocksStatus } from "./stocks/manager.js";
 import type { HacknetControl, HacknetStatus } from "./hacknet/manager.js";
 import type { HacknetConfig } from "./lib/plan/hacknet.js";
 import type { CorpConfig } from "./lib/plan/corp.js";
+import { chooseTarget, DEFAULT_INFILTRATION, type InfiltrationConfig } from "./lib/plan/infiltration.js";
+import type { InfiltrationControl, InfiltrationState } from "./infiltrate.js";
 import type { CorpControl, CorpStatus } from "./corp/manager.js";
 
 interface DaemonConfig {
@@ -60,6 +62,9 @@ interface DaemonConfig {
   contractsEveryMs: number;
   /** Trade stocks with 4S data (stocks/manager.js, ~37 GB) once home has stocksMinHomeGB. */
   /** Corporation (corp/manager.js, needs SF3 or BN3): Agriculture, investors, dividends. */
+  /** Infiltration autoplayer (infiltrate.js) when it beats faction work for the grind faction. */
+  manageInfiltration: boolean;
+  infiltration: Partial<InfiltrationConfig>;
   manageCorp: boolean;
   corp: Partial<CorpConfig>;
   /** Hacknet servers: spend hashes by value, buy production by payback (hacknet/manager.js). */
@@ -90,6 +95,8 @@ const DEFAULTS: DaemonConfig = {
   gang: {},
   manageContracts: true,
   contractsEveryMs: 5 * 60_000,
+  manageInfiltration: true,
+  infiltration: {},
   manageCorp: true,
   corp: {},
   manageHacknet: true,
@@ -220,6 +227,8 @@ export async function main(ns: NS): Promise<void> {
     if (s && cfg.casino && (s.earned.casino ?? 0) < CASINO_CAP) wanted.push(SCRIPTS.casinoTable);
     // plus room for the Stanek charger while it waits for a big enough block of home RAM
     if (corpOk) wanted.push(SCRIPTS.corpManager);
+    // room for infiltrate.js (+ its proxies) while the daemon wants it running
+    if (readJson<{ active?: boolean }>(ns, DATA.infiltrationConfig, {}).active) wanted.push(SCRIPTS.infiltrate);
     // corp calls run through ~22 GB proxies (corporation functions cost 10–20 GB each)
     const corpProxyGB = corpOk && ns.isRunning(SCRIPTS.corpManager, "home") ? 22 : 0;
     const reserve = homeReserve(ns, wanted, (stanekStatus?.reserveGB ?? 0) + corpProxyGB);
@@ -366,6 +375,56 @@ let bladeburnerWanted = false;
  * Simulacrum, and owning it blocks accepting the gift for the rest of the BitNode.
  */
 let lastSleeveLog = 0;
+let infilEstimate: { t: number; repPerSec: number; target: string } = { t: 0, repPerSec: 0, target: "" };
+
+/**
+ * Infiltrate for the faction the planner is grinding when it beats faction work: the best
+ * location's rep/s (measured runs, else the info API) vs. that faction's work rep/s × margin.
+ * Not during the casino or Bladeburner training, and not within 10 min of a failed run.
+ * Returns true while infiltrate.js runs (it owns the UI and the player's time).
+ */
+async function infiltrationModule(
+  ns: NS,
+  data: FactionData,
+  p: Plan,
+  dcfg: DaemonConfig,
+  casinoBetting: boolean,
+  event: (k: string, msg: string, d?: unknown) => void,
+): Promise<boolean> {
+  const running = ns.isRunning(SCRIPTS.infiltrate, "home");
+  const cfg: InfiltrationConfig = { ...DEFAULT_INFILTRATION, ...dcfg.infiltration };
+  const faction = p.work?.faction ?? null;
+  const st = readJson<Partial<InfiltrationState>>(ns, DATA.infiltration, {});
+  let active = false;
+  if (dcfg.manageInfiltration && faction && !casinoBetting && !p.train) {
+    if (Date.now() - infilEstimate.t > 5 * 60_000) {
+      const locs = ns.infiltration.getPossibleLocations();
+      const infos = await callEach<{ difficulty: number; maxClearanceLevel: number; reward: { tradeRep: number; sellCash: number } }>(
+        ns,
+        "infiltration.getInfiltration",
+        locs.map((l) => [l.name]),
+      );
+      const targets = locs.flatMap((l, k) => {
+        const i = infos[k];
+        return i ? [{ name: l.name, city: l.city, difficulty: i.difficulty, levels: i.maxClearanceLevel, tradeRep: i.reward.tradeRep, sellCash: i.reward.sellCash }] : [];
+      });
+      const best = chooseTarget(targets, st.measured ?? {}, cfg);
+      infilEstimate = { t: Date.now(), repPerSec: best?.repPerSec ?? 0, target: best?.target.name ?? "" };
+    }
+    const workRate = data.factions[faction]?.workRepPerSec ?? 0;
+    const failedRecently = st.lastRun && !st.lastRun.ok && Date.now() - (st.t ?? 0) < 10 * 60_000;
+    active = !failedRecently && infilEstimate.repPerSec > workRate * cfg.margin;
+  }
+  const ctl: InfiltrationControl = { active, faction, cfg: dcfg.infiltration };
+  writeJson(ns, DATA.infiltrationConfig, ctl);
+  if (active && !running && ns.exec(SCRIPTS.infiltrate, "home", 1, faction!))
+    event(
+      "infiltration",
+      `infiltrating ${infilEstimate.target} for ${faction}: ~${num(infilEstimate.repPerSec)} rep/s vs ${num(data.factions[faction!]?.workRepPerSec ?? 0)} working`,
+    );
+  return running || (active && ns.isRunning(SCRIPTS.infiltrate, "home"));
+}
+
 /** true once we've joined the Bladeburner division (this BitNode) */
 let bbInDivision = false;
 
@@ -463,7 +522,10 @@ async function factionsModule(
 
   const act: ActArgs = { join: p.join, travelTo: p.travelTo, work: p.work, crime: p.crime, buyNow: p.buyNow, train: p.train };
   // casino.js drives the UI (blackjack table); work/travel would navigate away from it
-  const casinoRunning = ns.isRunning(SCRIPTS.casinoTable, "home");
+  const casinoBetting = ns.isRunning(SCRIPTS.casinoTable, "home");
+  const infiltrating = await infiltrationModule(ns, data, p, dcfg, casinoBetting, event);
+  // casino.js / infiltrate.js drive the UI; work/travel would navigate away from it
+  const casinoRunning = casinoBetting || infiltrating;
   if (casinoRunning) {
     act.work = null;
     act.crime = null;

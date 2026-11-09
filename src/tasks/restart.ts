@@ -14,6 +14,7 @@ const MANAGERS: string[] = [
   SCRIPTS.bladeburnerManager,
   SCRIPTS.hacknetManager,
   SCRIPTS.corpManager,
+  SCRIPTS.infiltrate,
 ];
 
 export async function main(ns: NS): Promise<void> {

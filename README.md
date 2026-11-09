@@ -58,6 +58,7 @@ daemon.js                 orchestrator: telemetry → metrics → planner module
 ├─ hacknet/manager.js     hacknet servers: hashes by value, production by payback (~10 GB, SF9)
 ├─ stocks/manager.js      4S-forecast stock trader, longs + shorts (~37 GB, home ≥ 512 GB)
 ├─ bladeburner/manager.js Bladeburner: join, skills, city, actions (~73 GB, home ≥ 512 GB)
+├─ infiltrate.js          infiltration autoplayer: reads each minigame's model, trades intel for rep
 └─ casino.js              blackjack save-scummer for the casino's $10b-per-install allowance
 lib/                      task runner, call proxy, metrics, network, file IO, formatting
 lib/plan/                 faction/aug data collection, requirement evaluator, planner
@@ -182,6 +183,20 @@ counts the portfolio's liquidation value as money; `tasks/install.js` sells ever
 buying augs, since installing wipes positions without paying out. No pre-4S (price-history)
 trading yet.
 
+**Infiltration** (`lib/plan/infiltration.ts` decides, `infiltrate.ts` plays). The game punishes
+scripted key presses on purpose (an untrusted keydown hospitalizes you), so no key events are
+ever dispatched: the script finds the infiltration object through React's fiber tree and calls
+the active minigame model's own `onKey()` with keys computed from that model's state (the
+cheat code, the brackets, the grid target, the positive bribe word, the mine layout, which
+wires to cut, the backward answer; Slash strikes only while the guard is distracted). Games
+are recognised by their fields, not (minified) class names, and a key is never sent once the
+stage has moved on. The daemon starts it for the faction the planner is grinding when the best
+location's rep/s — measured per location (EMA; dropped once rewards decay below 50% of the
+first run), else estimated from `ns.infiltration` — beats that faction's work rep/s by 20%,
+and not during the casino, Bladeburner training, or within 10 min of a failed run. While it
+runs the daemon leaves work, travel and installs alone. This deliberately bypasses the game's
+anti-automation; `"manageInfiltration": false` turns it off.
+
 **Coding contracts** (`lib/contracts.ts`, pure and unit-tested). All 30 contract types have a
 solver; Hamming codes and LZ compression follow the game's own algorithms, since answers must
 match its format/length. Every 5 minutes `tasks/contracts.js` (~22 GB) solves what it finds on
@@ -298,5 +313,6 @@ faction-working.
 - [ ] Stock market: pre-4S trading from price history
 - [x] Corporation: Agriculture, boost materials, research, investment rounds, dividends
 - [ ] Corporation: product division (Tobacco), exports, dividend rate from data
+- [x] Infiltration: model-reading autoplayer, rep-per-second trigger vs. faction work
 - [ ] IPvGO cheats (SF14 `ns.go.cheat`) where the success chance is worth the risk
 - [x] Endgame: Daedalus → The Red Pill → w0r1d_d43m0n, then auto-continue into the next BN12 level

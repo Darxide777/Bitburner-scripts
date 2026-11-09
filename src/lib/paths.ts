@@ -15,6 +15,8 @@ export const DATA = {
   goConfig: "data/go-config.txt", // IPvGO tunables
   contracts: "data/contracts.txt", // coding contracts: totals + ones we failed (never retried)
   contractsSelftest: "data/contracts-selftest.txt", // per-build check of every solver on dummy contracts
+  infiltration: "data/infiltration.txt", // infiltration runs: measured rep/s per location
+  infiltrationConfig: "data/infiltration-config.txt", // infiltration control, written by the daemon
   corp: "data/corp.txt", // corporation manager status
   corpConfig: "data/corp-config.txt", // corporation control, written by the daemon
   hacknet: "data/hacknet.txt", // hacknet manager status (options, decision, measured effects)
@@ -37,6 +39,7 @@ export const SCRIPTS = {
   stocksManager: "stocks/manager.js",
   hacknetManager: "hacknet/manager.js",
   corpManager: "corp/manager.js",
+  infiltrate: "infiltrate.js",
   casinoTable: "casino/table.js", // the DOM-driving script (~36 GB)
   hack: "hack/w/h.js",
   grow: "hack/w/g.js",
