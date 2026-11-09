@@ -344,10 +344,10 @@ let lastReserve = 0;
 let runRateCache: { t: number; rate: number | null } = { t: 0, rate: null };
 
 /**
- * Average aug value per second of the last 5 runs: each run (data/runs.txt) valued by the
+ * Average aug value per second of the last 5 runs this BitNode: each run (data/runs.txt) valued by the
  * augs its install event bought (data/events.txt), with the planner's own aug values.
  */
-function recentRunRate(ns: NS, data: FactionData, cfg: PlanConfig): number | null {
+function recentRunRate(ns: NS, data: FactionData, cfg: PlanConfig, nodeStart: number): number | null {
   if (Date.now() - runRateCache.t < 5 * 60_000) return runRateCache.rate;
   const jsonl = <T,>(file: string): T[] =>
     ns
@@ -361,7 +361,8 @@ function recentRunRate(ns: NS, data: FactionData, cfg: PlanConfig): number | nul
           return [];
         }
       });
-  const runs = jsonl<RunRecord>(DATA.runs);
+  // this BitNode only: runs late in an earlier node (many NeuroFlux levels, bigger augs) aren't comparable
+  const runs = jsonl<RunRecord>(DATA.runs).filter((r) => r.t > nodeStart + 60_000);
   const installs = jsonl<{ t: number; kind: string; msg: string; data?: { bought?: string[]; nfg?: number } }>(DATA.events)
     .filter((e) => e.kind === "install" && e.msg.startsWith("installing ") && e.data?.bought)
     .map((e) => ({ t: e.t, bought: e.data!.bought!, nfg: e.data!.nfg ?? 0 }));
@@ -706,7 +707,7 @@ async function factionsModule(
       sinceInstall: m.sinceInstall,
       currentWork: work?.factionName ?? null,
       ratesReady: m.long.spanMs >= 120_000,
-      avgRunRate: recentRunRate(ns, data, cfg),
+      avgRunRate: recentRunRate(ns, data, cfg, s.lastNodeReset),
       bladeburner: {
         inDivision: bbInDivision || readJson<Partial<BladeburnerStatus>>(ns, DATA.bladeburner, {}).inDivision === true,
         simulacrum: data.installed.includes(SIMULACRUM),

@@ -115,7 +115,7 @@ collects faction/aug state and the planner decides:
   Bladeburners and Church of the Machine God, which refuse them). The Red Pill is bought immediately.
 - *install*: by the marginal value theorem — once waiting for the best pending aug earns less
   value per second (its value ÷ its ETA) than recent runs earned on average (aug value
-  installed ÷ run length over the last 5 runs: `data/runs.txt` lengths, valued from the augs each
+  installed ÷ run length over the last 5 runs this BitNode: `data/runs.txt` lengths, valued from the augs each
   install event in `data/events.txt` bought), with at least `minAugsToInstall` new augs. Until 3
   runs can be valued, the old rule: next aug further away than `installPatience` × the run so far.
   Also when the run exceeds `maxRunMs`, or when installing would unlock donations at a faction
