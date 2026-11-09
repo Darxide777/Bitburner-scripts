@@ -44,6 +44,8 @@ daemon.js                 orchestrator: telemetry → metrics → planner module
 │   ├─ economy.js         TOR, port openers, home RAM/cores, cloud servers
 │   ├─ factions-act.js    join / travel / work / crime / buy The Red Pill
 │   ├─ backdoor.js        connect along the path and install a backdoor (spawned, not awaited)
+│   ├─ contracts.js       solve every coding contract on the network (every 5 min)
+│   ├─ contracts-selftest.js  every solver vs. the game's dummy contracts, once per build
 │   ├─ install.js         buy planned augs → home RAM → NeuroFlux → install, restart daemon
 │   └─ destroy.js         destroy w0r1d_d43m0n → next BN12
 ├─ tmp/call/*.js          generated one-function proxies (see lib/call.ts)
@@ -130,6 +132,14 @@ and crime). Each update:
 - otherwise the contract/operation with the most expected rank/s (≥70% contracts, ≥80% ops;
   Raid and Stealth Retirement skipped), without abandoning an action halfway
 - skills bought greedily by weight per point; moves to the city with the largest estimated population
+
+**Coding contracts** (`lib/contracts.ts`, pure and unit-tested). All 30 contract types have a
+solver; Hamming codes and LZ compression follow the game's own algorithms, since answers must
+match its format/length. Every 5 minutes `tasks/contracts.js` (~22 GB) solves what it finds on
+the network. A contract answered wrong is never retried (a broken solver would burn its tries)
+and is listed in `data/contracts.txt`. After every new build the daemon runs a self-test that
+creates a dummy of each type and submits it; `data/contracts-selftest.txt` lists failures with
+the game's description and data.
 
 **Stanek's Gift** (`lib/plan/stanek.ts` solves, `lib/stanek.ts` manages). From the game's source,
 a fragment's bonus is `ln(highestCharge+1)/60 · ((numCharge+1)/5)^0.07 · power · boost`, where
@@ -218,6 +228,7 @@ faction-working.
 - [x] Bladeburner: join (after Stanek), skills, city, stamina/chaos control, contracts/ops/black ops
 - [x] Bladeburner first: gym training to join early, Operation Daedalus as a win condition
 - [ ] Bladeburner: sleeves on Bladeburner actions (Infiltrate Synthoids, contracts)
-- [ ] Corporation, coding contracts, stock market
+- [x] Coding contracts: all 30 types, per-build self-test against the game
+- [ ] Corporation, stock market
 - [ ] IPvGO cheats (SF14 `ns.go.cheat`) where the success chance is worth the risk
 - [ ] Endgame: Daedalus → The Red Pill → w0r1d_d43m0n, then auto-continue into the next BN12 level

@@ -48,6 +48,9 @@ interface DaemonConfig {
   go: Partial<GoConfig>;
   /** Overrides for the gang manager (see lib/plan/gang.ts DEFAULT_GANG); mode is set automatically unless given. */
   gang: Partial<GangConfig>;
+  /** Solve coding contracts (tasks/contracts.js) every contractsEveryMs. */
+  manageContracts: boolean;
+  contractsEveryMs: number;
   manageBladeburner: boolean;
   /** Overrides for Bladeburner decisions (see lib/plan/bladeburner.ts DEFAULT_BB). */
   bladeburner: Partial<BbConfig>;
@@ -66,6 +69,8 @@ const DEFAULTS: DaemonConfig = {
   stanek: {},
   go: {},
   gang: {},
+  manageContracts: true,
+  contractsEveryMs: 5 * 60_000,
   manageBladeburner: true,
   bladeburner: {},
   bladeburnerMinHomeGB: 512,
@@ -91,6 +96,8 @@ export async function main(ns: NS): Promise<void> {
   let lastEconomy = 0;
   let lastFactions = 0;
   let lastMetricsLine = 0;
+  let lastContracts = 0;
+  let selftestStarted = false;
   let current: Plan | null = null;
   let lastNotes = "";
   let lastError = "";
@@ -136,6 +143,13 @@ export async function main(ns: NS): Promise<void> {
     if (cfg.go.enabled !== false) {
       writeJson(ns, DATA.goConfig, cfg.go);
       if (!ns.isRunning(SCRIPTS.goManager, "home") && ns.exec(SCRIPTS.goManager, "home")) event("go", "started IPvGO manager");
+    }
+
+    // ---- coding contracts (and, once per build, the solver self-test on dummies) ----
+    if (cfg.manageContracts) {
+      if (!selftestStarted && readJson<{ build?: string }>(ns, DATA.contractsSelftest, {}).build !== build)
+        selftestStarted = spawnTask(ns, "tasks/contracts-selftest.js", [build]) > 0;
+      if (Date.now() - lastContracts > cfg.contractsEveryMs && spawnTask(ns, "tasks/contracts.js") > 0) lastContracts = Date.now();
     }
 
     // ---- hacking manager ----
@@ -197,7 +211,7 @@ function freeHome(ns: NS): void {
 }
 
 /** Tasks that only run right before a reset; they get RAM by freeing home instead of a permanent reserve. */
-const ONE_OFF_TASKS = ["tasks/install.js", "tasks/destroy.js"];
+const ONE_OFF_TASKS = ["tasks/install.js", "tasks/destroy.js", "tasks/contracts-selftest.js", "tasks/restart.js"];
 
 /** RAM to keep free on home for tasks: the biggest frequently-run task + headroom. */
 function homeReserve(ns: NS, wanted: string[] = [], extraGB = 0): number {

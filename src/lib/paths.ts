@@ -13,6 +13,8 @@ export const DATA = {
   casino: "data/casino.txt", // casino.js outcome for the current install
   go: "data/go.txt", // IPvGO manager status
   goConfig: "data/go-config.txt", // IPvGO tunables
+  contracts: "data/contracts.txt", // coding contracts: totals + ones we failed (never retried)
+  contractsSelftest: "data/contracts-selftest.txt", // per-build check of every solver on dummy contracts
   bladeburner: "data/bladeburner.txt", // Bladeburner manager status
   bladeburnerConfig: "data/bladeburner-config.txt", // Bladeburner control, written by the daemon
 } as const;

@@ -7,6 +7,7 @@ import type { NS } from "@ns";
 export function replacer(_k: string, v: unknown): unknown {
   if (v instanceof Map) return Object.fromEntries(v);
   if (v instanceof Set) return [...v];
+  if (typeof v === "bigint") return v.toString(); // e.g. Square Root contracts
   return v;
 }
 
