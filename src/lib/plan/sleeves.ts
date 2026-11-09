@@ -80,15 +80,19 @@ export function moneyCrime(s: SleeveInfo): string {
 
 export function decideSleeves(input: SleeveInput): Assignment[] {
   const out: (Assignment | null)[] = input.sleeves.map(() => null);
-  if (input.needKarma) return input.sleeves.map((s) => ({ kind: "crime", crime: karmaCrime(s) }));
-
   const free = new Set(input.sleeves.map((_, idx) => idx));
   const rec = input.recovery ?? DEFAULT_RECOVERY;
 
-  // 1. recovery rotation
-  if (rec.mode === "rotate") for (const idx of recoveryPicks(input.sleeves, rec)) {
-    out[idx] = { kind: "recovery" };
-    free.delete(idx);
+  // 1. recovery rotation — also while farming karma: shock is highest then, and the slot
+  //    costs at most 1/n of karma gain
+  if (rec.mode === "rotate")
+    for (const idx of recoveryPicks(input.sleeves, rec)) {
+      out[idx] = { kind: "recovery" };
+      free.delete(idx);
+    }
+  if (input.needKarma) {
+    for (const idx of free) out[idx] = { kind: "crime", crime: karmaCrime(input.sleeves[idx]) };
+    return out as Assignment[];
   }
 
   const assignFactions = (list: string[]) => {

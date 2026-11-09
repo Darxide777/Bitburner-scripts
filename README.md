@@ -109,10 +109,19 @@ the gang in the joined gang faction with the most valuable unowned augs. Every g
 - ascends at most one member per update, once their multiplier gain clears a threshold that
   shrinks as the multiplier grows
 
-**Sleeves** (`lib/plan/sleeves.ts`, `lib/sleeves.ts`). With no gang yet, every sleeve commits
-Homicide (Mug while Homicide would mostly fail), which minimizes time-to-gang. Otherwise each
-grindable faction gets its best-suited sleeve, never the faction the player is working for.
-Leftover sleeves recover from shock or do crime. Cheap sleeve augs are bought as shock reaches 0.
+**Sleeves** (`lib/plan/sleeves.ts`, `lib/sleeves.ts`). One recovery slot rotates by shock: the
+most-shocked sleeve recovers (it produces least, so benching it costs least) and hands over once
+another sleeve is 5 points worse (`"sleeveRecovery": {"slots", "margin", "mode": "rotate"|"spare"|"off"}`).
+With no gang yet, the others commit Homicide (Mug while Homicide would mostly fail), which
+minimizes time-to-gang. Otherwise each grindable faction gets its best-suited sleeve, never the
+faction the player is working for; then Bladeburner contracts (one sleeve per contract, ≥70%
+success) while in the division with black ops left; then favor building; leftovers do crime.
+Cheap sleeve augs are bought as shock reaches 0.
+
+Whether early shock recovery pays is measured, not assumed: `data/sleeves.txt` logs every
+sleeve's shock/task each minute with predicted vs. observed faction rep, and
+`node tools/sleeve-shock.mjs` reports recovery vs. passive decay, shock resets at installs,
+whether shock actually scales rep (the game documents it only for exp), and the break-even.
 
 **Bladeburner** (`lib/plan/bladeburner.ts` decides, `bladeburner/manager.ts` acts). Bladeburners
 rep only comes from rank, so the planner never plans donations there. With SF7.3, joining the
@@ -237,7 +246,8 @@ faction-working.
 - [ ] Hacknet servers + hash spending
 - [x] Bladeburner: join (after Stanek), skills, city, stamina/chaos control, contracts/ops/black ops
 - [x] Bladeburner first: gym training to join early, Operation Daedalus as a win condition
-- [ ] Bladeburner: sleeves on Bladeburner actions (Infiltrate Synthoids, contracts)
+- [x] Sleeves on Bladeburner contracts; shock-recovery rotation + experiment telemetry
+- [ ] Sleeves: pick recovery slots from the measured break-even instead of a fixed count
 - [x] Coding contracts: all 30 types, per-build self-test against the game
 - [x] Stock market: 4S forecasts, longs + shorts, liquidation before install
 - [ ] Stock market: pre-4S trading from price history

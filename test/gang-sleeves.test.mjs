@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { decideGang, ascendThreshold, DEFAULT_GANG } from "../dist/lib/plan/gang.js";
-import { decideSleeves } from "../dist/lib/plan/sleeves.js";
+import { decideSleeves, recoveryPicks, DEFAULT_RECOVERY } from "../dist/lib/plan/sleeves.js";
 
 // ---------- gang ----------
 const member = (name, stat, o = {}) => ({
@@ -94,4 +94,46 @@ test("leftover sleeves pick the best-paying crime (Heist when it's likely to suc
 test("karma mode still uses Homicide even when Heist is available", () => {
   const a = decideSleeves({ sleeves: [sleeve(0, { heistChance: 1 })], needKarma: true, targets: [], playerFaction: null });
   assert.deepEqual(a, [{ kind: "crime", crime: "Homicide" }]);
+});
+
+test("recovery rotation: most-shocked sleeve, kept until another is `margin` worse", () => {
+  const rec = DEFAULT_RECOVERY; // 1 slot, margin 5
+  const fresh = [sleeve(0, { shock: 90 }), sleeve(1, { shock: 97 }), sleeve(2, { shock: 0 })];
+  assert.deepEqual(recoveryPicks(fresh, rec), [1]);
+  // the holder (now 93) keeps the slot while the others are < 5 points worse
+  const held = [sleeve(0, { shock: 97 }), sleeve(1, { shock: 93, current: { kind: "recovery" } })];
+  assert.deepEqual(recoveryPicks(held, rec), [1]);
+  // ...and hands it over at the margin
+  const swap = [sleeve(0, { shock: 98 }), sleeve(1, { shock: 93, current: { kind: "recovery" } })];
+  assert.deepEqual(recoveryPicks(swap, rec), [0]);
+  // done recovering (below minShock) → nobody
+  assert.deepEqual(recoveryPicks([sleeve(0, { shock: 0.5, current: { kind: "recovery" } })], rec), []);
+  assert.deepEqual(recoveryPicks(fresh, { ...rec, slots: 2 }).sort(), [0, 1]);
+});
+
+test("karma phase: one sleeve recovers, the rest farm karma; mode off disables it", () => {
+  const sleeves = [0, 1, 2].map((i) => sleeve(i, { shock: 97 - i }));
+  const a = decideSleeves({ sleeves, needKarma: true, targets: [], playerFaction: null });
+  assert.deepEqual(a.map((x) => x.kind), ["recovery", "crime", "crime"]);
+  const off = decideSleeves({ sleeves, needKarma: true, targets: [], playerFaction: null, recovery: { ...DEFAULT_RECOVERY, mode: "off" } });
+  assert.ok(off.every((x) => x.kind === "crime"));
+});
+
+test("Bladeburner contracts: after grind targets, before favor; one sleeve each, only if likely", () => {
+  const bbChance = (r, b) => ({ Retirement: r, "Bounty Hunter": b });
+  const sleeves = [
+    sleeve(0, { gains: { A: { hacking: 9 }, F: { hacking: 9 } }, bbChance: bbChance(0.99, 0.99) }),
+    sleeve(1, { gains: { F: { hacking: 1 } }, bbChance: bbChance(0.9, 0.95) }),
+    sleeve(2, { gains: { F: { hacking: 2 } }, bbChance: bbChance(0.8, 0.5) }),
+    sleeve(3, { gains: { F: { hacking: 3 } }, bbChance: bbChance(0.1, 0.1) }),
+  ];
+  const a = decideSleeves({
+    sleeves, needKarma: false, targets: ["A"], favorTargets: ["F"], playerFaction: null,
+    bladeburner: { contracts: ["Retirement", "Bounty Hunter"], minChance: 0.7 },
+  });
+  assert.equal(a[0].faction, "A"); // grind target first, even though it's the best Bladeburner
+  assert.deepEqual(a[1], { kind: "bladeburner", action: "Take on contracts", contract: "Retirement" });
+  // Bounty Hunter: sleeve 1 is taken, sleeve 2 (50%) and 3 (10%) are below 70% → nobody
+  assert.ok(!a.some((x) => x.contract === "Bounty Hunter"));
+  assert.ok(a.slice(2).some((x) => x.faction === "F")); // favor next
 });
