@@ -248,7 +248,7 @@ export async function main(ns: NS): Promise<void> {
     if (corpOk) {
       // bribe target: the rep gap of the faction being ground, else the biggest pending gap
       // (bribes, like donations, need a faction that offers work)
-      const gaps = (current?.pending ?? []).filter((c) => c.repGap > 0 && c.donation === 0);
+      const gaps = (current?.pending ?? []).filter((c) => c.repGap > 0 && c.donation === 0 && workableFactions.has(c.faction));
       const gap = gaps.find((c) => c.faction === current?.work?.faction) ?? [...gaps].sort((a, b) => b.repGap - a.repGap)[0];
       const ctl: CorpControl = {
         allowCreate: !ns.isRunning(SCRIPTS.casinoTable, "home"),
@@ -353,6 +353,8 @@ export async function main(ns: NS): Promise<void> {
 
 /** Kill everything on home except the daemon (before install/destroy, which wipe scripts anyway). */
 let lastReserve = 0;
+/** factions that offer work (bribes and donations need that) */
+let workableFactions = new Set<string>();
 /** latest skills and sleeve shock, for the per-minute metrics line */
 let lastSkills: Record<string, number> = {};
 let lastSleeveShock: number | null = null;
@@ -861,6 +863,7 @@ async function factionsModule(
   await bladeburnerModule(ns, data, p, dcfg, casinoRunning, event);
   await graftingModule(ns, data, p, dcfg, cfg);
   lastSkills = Object.fromEntries(Object.entries(data.skills).map(([k, v]) => [k, Math.round(v)]));
+  workableFactions = new Set(Object.keys(data.factions).filter((f) => data.factions[f].workTypes.length > 0));
   noteMilestones(ns, data, s, event);
 
   // sleeves first, so none of them is sitting on the faction the player is about to work for
