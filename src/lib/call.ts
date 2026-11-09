@@ -39,11 +39,18 @@ export async function callEach<R>(ns: NS, fn: string, argLists: unknown[][], tim
   const script = `${DIR}/${fn}.js`;
   const src = source(fn);
   if (ns.read(script) !== src) ns.write(script, src, "w");
-  const input = `${DIR}/${fn}.in.txt`;
-  const out = `${DIR}/${fn}.out.txt`;
+  // per caller script: two scripts calling the same function at once must not share files
+  const who = ns.getScriptName().replace(/[^A-Za-z0-9]/g, "_");
+  const input = `${DIR}/${fn}.${who}.in.txt`;
+  const out = `${DIR}/${fn}.${who}.out.txt`;
   ns.write(input, JSON.stringify(argLists), "w");
   ns.write(out, "", "w");
-  const pid = ns.exec(script, "home", { threads: 1, temporary: true }, out, input);
+  // RAM on home comes and goes (batch bursts, other proxies): retry for ~1 s before giving up
+  let pid = 0;
+  for (let attempt = 0; attempt < 6 && pid === 0; attempt++) {
+    if (attempt) await ns.sleep(200);
+    pid = ns.exec(script, "home", { threads: 1, temporary: true }, out, input);
+  }
   if (pid === 0) throw new CallError(`could not start ${fn} (not enough free RAM on home?)`);
   const deadline = Date.now() + timeoutMs;
   while (ns.isRunning(pid)) {

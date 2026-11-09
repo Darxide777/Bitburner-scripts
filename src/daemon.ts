@@ -289,7 +289,11 @@ export async function main(ns: NS): Promise<void> {
     // corp calls run through ~22 GB proxies (corporation functions cost 10–20 GB each)
     // (only once a corporation exists: before that the manager just waits)
     const corpProxyGB = corpOk && ns.isRunning(SCRIPTS.corpManager, "home") && readJson<{ exists?: boolean }>(ns, DATA.corp, {}).exists ? 22 : 0;
-    const reserve = homeReserve(ns, wanted, (stanekStatus?.reserveGB ?? 0) + corpProxyGB);
+    // other managers' proxies run alongside the daemon's: Go cheats (~9.6 GB), infiltration's
+    // location lookups (~16.6 GB)
+    const procs = new Set(ns.ps("home").map((x) => x.filename));
+    const managerProxyGB = (procs.has(SCRIPTS.goManager) ? 10 : 0) + (procs.has(SCRIPTS.infiltrate) ? 17 : 0);
+    const reserve = homeReserve(ns, wanted, (stanekStatus?.reserveGB ?? 0) + corpProxyGB + managerProxyGB);
     lastReserve = reserve;
     const hackCfg: Partial<HackConfig> = {
       homeReserve: reserve,
@@ -334,7 +338,7 @@ export async function main(ns: NS): Promise<void> {
         hackLevel: s.hackLevel,
         homeRam: s.homeRam,
         homeFree: ns.getServerMaxRam("home") - ns.getServerUsedRam("home"),
-        uiBusy: ns.isRunning(SCRIPTS.casinoTable, "home") || ns.isRunning(SCRIPTS.infiltrate, "home"),
+        uiBusy: ns.isRunning(SCRIPTS.casinoTable, "home") || ns.ps("home").some((x) => x.filename === SCRIPTS.infiltrate),
         workFaction: current?.work?.faction ?? null,
         installPlanned: !!current?.install,
         sinceInstallMs: m.sinceInstall,
@@ -667,7 +671,9 @@ async function infiltrationModule(
   casinoBetting: boolean,
   event: (k: string, msg: string, d?: unknown) => void,
 ): Promise<boolean> {
-  const running = ns.isRunning(SCRIPTS.infiltrate, "home");
+  // by process list: it runs with the faction as its argument, so isRunning(script, host)
+  // without args never matched it and a second copy was started next to the first
+  const running = ns.ps("home").some((x) => x.filename === SCRIPTS.infiltrate);
   const cfg: InfiltrationConfig = { ...DEFAULT_INFILTRATION, ...dcfg.infiltration };
   const faction = p.work?.faction ?? null;
   const st = readJson<Partial<InfiltrationState>>(ns, DATA.infiltration, {});
@@ -707,7 +713,7 @@ async function infiltrationModule(
       "infiltration",
       `infiltrating ${infilEstimate.target} for ${faction}: ~${num(infilEstimate.repPerSec)} rep/s vs ${num(data.factions[faction!]?.workRepPerSec ?? 0)} working`,
     );
-  return running || (active && ns.isRunning(SCRIPTS.infiltrate, "home"));
+  return running || (active && ns.ps("home").some((x) => x.filename === SCRIPTS.infiltrate));
 }
 
 /** true once we've joined the Bladeburner division (this BitNode) */

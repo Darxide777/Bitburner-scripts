@@ -100,7 +100,10 @@ export async function main(ns: NS): Promise<void> {
       });
       // ---- cheat, if its expected value beats the normal move ----
       if (cfg.cheats && cheatsAvailable !== false && res.move !== PASS) {
-        const p = await call<number>(ns, "go.cheat.getCheatSuccessChance");
+        // a proxy that can't start (home RAM full) just means: no cheat this turn
+        const p = await call<number>(ns, "go.cheat.getCheatSuccessChance").catch(() => null);
+        if (p === null) cheatCheck.last = "no RAM for the cheat proxy this turn";
+        else {
         cheatsAvailable = p !== undefined;
         cheatCheck.available = cheatsAvailable;
         cheatCheck.chance = p ?? 0;
@@ -108,16 +111,19 @@ export async function main(ns: NS): Promise<void> {
         else if (p < cfg.cheatMinChance) cheatCheck.last = `chance ${(p * 100).toFixed(0)}% < ${cfg.cheatMinChance * 100}%`;
         else if (res.winRate > cfg.cheatMaxWinRate) cheatCheck.last = `already winning (${res.winRate.toFixed(2)})`;
         if (p !== undefined && p >= cfg.cheatMinChance && res.winRate <= cfg.cheatMaxWinRate) {
-          const prior = (await call<number>(ns, "go.cheat.getCheatCount")) ?? 0;
+          const prior = (await call<number>(ns, "go.cheat.getCheatCount").catch(() => 0)) ?? 0;
           const pick = await evaluateCheats(ns, board, size, state.komi, history, res.move, res.winRate, thinkMs, p, prior, cfg);
           cheatCheck.evaluated++;
           cheatCheck.last = pick ? `played ${pick.kind} (EV ${pick.ev.toFixed(2)} vs ${res.winRate.toFixed(2)})` : `evaluated: no cheat beats ${res.winRate.toFixed(2)} by ${cfg.cheatMargin}`;
           if (pick) {
             const xy = (i: number) => [Math.floor(i / size), i % size];
-            const rr =
-              pick.kind === "twoMoves"
-                ? await call<{ type: "move" | "pass" | "gameOver" }>(ns, "go.cheat.playTwoMoves", ...xy(pick.cells[0]), ...xy(pick.cells[1]))
-                : await call<{ type: "move" | "pass" | "gameOver" }>(ns, "go.cheat.removeRouter", ...xy(pick.cells[0]));
+            const rr = await (pick.kind === "twoMoves"
+              ? call<{ type: "move" | "pass" | "gameOver" }>(ns, "go.cheat.playTwoMoves", ...xy(pick.cells[0]), ...xy(pick.cells[1]))
+              : call<{ type: "move" | "pass" | "gameOver" }>(ns, "go.cheat.removeRouter", ...xy(pick.cells[0]))
+            ).catch(() => "no RAM" as const);
+            if (rr === "no RAM") {
+              cheatCheck.last = "no RAM for the cheat call: normal move";
+            } else {
             const now = parse(go.getBoardState());
             const ok = pick.kind === "twoMoves" ? pick.cells.every((i) => now[i] === BLACK) : now[pick.cells[0]] !== WHITE;
             const c = (st.cheats ??= { attempts: 0, successes: 0, ejections: 0, predicted: 0 });
@@ -132,7 +138,9 @@ export async function main(ns: NS): Promise<void> {
               continue;
             }
             // the proxy threw (move rejected?): fall through to a normal move this turn
+            }
           }
+        }
         }
       }
 

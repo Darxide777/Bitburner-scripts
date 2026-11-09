@@ -14,7 +14,7 @@
 // data/infiltration-config.txt says so, HP gets low, or a run fails.
 // Uses the DOM (25 GB while running); everything else goes through the call proxy.
 import type { NS } from "@ns";
-import { call } from "./lib/call.js";
+import { call, CallError } from "./lib/call.js";
 import { appendJsonl, appendLine, readJson, writeJson } from "./lib/io.js";
 import { DATA } from "./lib/paths.js";
 import {
@@ -66,6 +66,21 @@ const TRACE = "data/infiltration-trace.txt";
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
+  try {
+    await run(ns);
+  } catch (e) {
+    // a proxy that couldn't start (home RAM full) or anything else: never leave a run going
+    const s = findInfiltration(document);
+    if (s?.cancel) s.cancel();
+    appendJsonl(ns, DATA.events, {
+      t: Date.now(),
+      kind: "infiltration",
+      msg: `stopped: ${e instanceof CallError ? "no RAM for a proxy call" : e instanceof Error ? e.message : String(e)} (the daemon tries again later)`,
+    });
+  }
+}
+
+async function run(ns: NS): Promise<void> {
   const doc = document;
   const faction = String(ns.args[0] ?? "");
   const st = readJson<InfiltrationState>(ns, DATA.infiltration, { t: 0, measured: {}, runs: 0, failures: 0, lastRun: null, note: "" });
@@ -134,6 +149,7 @@ export async function main(ns: NS): Promise<void> {
     let ok = false;
     let missingSince = 0;
     let lastResults = "";
+    let lastGame = "?";
     for (let guard = 0; guard < 20_000; guard++) {
       if (findText(doc, "Infiltration successful!")) {
         ok = true;
@@ -149,6 +165,9 @@ export async function main(ns: NS): Promise<void> {
         continue;
       }
       missingSince = 0;
+      // per level: which game it was and how it went (to find the ones we fail)
+      if (state.results.length > lastResults.length)
+        trace(`level ${state.results.length}/${state.maxLevel}: ${lastGame} ${state.results.slice(lastResults.length)}`);
       lastResults = state.results;
       const model = state.stage;
       if (typeof model.onKey !== "function") {
@@ -161,6 +180,7 @@ export async function main(ns: NS): Promise<void> {
         continue;
       }
       const step = nextStep(model);
+      if (step.game !== "countdown" && step.game !== "unknown") lastGame = step.game;
       if ("wait" in step) {
         await ns.sleep(10);
         continue;
