@@ -52,6 +52,7 @@ daemon.js                 orchestrator: telemetry → metrics → planner module
 ├─ gang/manager.js        long-running gang manager, ticks on every gang update
 ├─ stanek/charge.js       one big charging process for Stanek's Gift (spawned after installs)
 ├─ go/play.js             IPvGO manager: our own MCTS player + matchup picker
+├─ bladeburner/manager.js Bladeburner: join, skills, city, actions (~73 GB, home ≥ 512 GB)
 └─ casino.js              blackjack save-scummer for the casino's $10b-per-install allowance
 lib/                      task runner, call proxy, metrics, network, file IO, formatting
 lib/plan/                 faction/aug data collection, requirement evaluator, planner
@@ -109,6 +110,22 @@ the gang in the joined gang faction with the most valuable unowned augs. Every g
 Homicide (Mug while Homicide would mostly fail), which minimizes time-to-gang. Otherwise each
 grindable faction gets its best-suited sleeve, never the faction the player is working for.
 Leftover sleeves recover from shock or do crime. Cheap sleeve augs are bought as shock reaches 0.
+
+**Bladeburner** (`lib/plan/bladeburner.ts` decides, `bladeburner/manager.ts` acts). Bladeburners
+rep only comes from rank, so the planner never plans donations there. With SF7.3, joining the
+division grants The Blade's Simulacrum, which blocks accepting Stanek's Gift for the rest of the
+BitNode, so the daemon only lets the manager join once the gift is accepted (or impossible).
+Joining needs all combat stats at 100. With the Simulacrum, actions run alongside faction work;
+without it they get the player only when there's no rep-gated aug to grind (ahead of NeuroFlux
+and crime). Each update:
+
+- rest in the Hyperbolic Regeneration Chamber below 55% stamina (success halves under 50%) until 95%
+- Diplomacy while city chaos is above 50; Field Analysis while success estimates are ±2.5% or worse
+- the next Black Op once rank allows it at ≥95% success; never Operation Daedalus by default
+  (`"bladeburner": {"allowFinalBlackOp": true}` in config), the hacking path ends the node
+- otherwise the contract/operation with the most expected rank/s (≥70% contracts, ≥80% ops;
+  Raid and Stealth Retirement skipped), without abandoning an action halfway
+- skills bought greedily by weight per point; moves to the city with the largest estimated population
 
 **Stanek's Gift** (`lib/plan/stanek.ts` solves, `lib/stanek.ts` manages). From the game's source,
 a fragment's bonus is `ln(highestCharge+1)/60 · ((numCharge+1)/5)^0.07 · power · boost`, where
@@ -194,7 +211,8 @@ faction-working.
       territory warfare, ascension
 - [ ] Gang: account for v3's install penalty on ascension multipliers (`getInstallResult`)
 - [ ] Hacknet servers + hash spending
-- [ ] Bladeburner (alternate win condition + rep)
+- [x] Bladeburner: join (after Stanek), skills, city, stamina/chaos control, contracts/ops/black ops
+- [ ] Bladeburner: sleeves on Bladeburner actions; train combat stats to 100 to join sooner
 - [ ] Corporation, coding contracts, stock market
 - [ ] IPvGO cheats (SF14 `ns.go.cheat`) where the success chance is worth the risk
 - [ ] Endgame: Daedalus → The Red Pill → w0r1d_d43m0n, then auto-continue into the next BN12 level

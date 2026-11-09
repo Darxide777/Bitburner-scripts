@@ -27,6 +27,8 @@ import { runTask, spawnTask } from "./lib/task.js";
 import type { Snapshot } from "./lib/types.js";
 import type { HackConfig } from "./hack/manager.js";
 import type { ActArgs } from "./tasks/factions-act.js";
+import type { BladeburnerControl, BladeburnerStatus } from "./bladeburner/manager.js";
+import type { BbConfig } from "./lib/plan/bladeburner.js";
 
 interface DaemonConfig {
   tickMs: number;
@@ -46,6 +48,11 @@ interface DaemonConfig {
   go: Partial<GoConfig>;
   /** Overrides for the gang manager (see lib/plan/gang.ts DEFAULT_GANG); mode is set automatically unless given. */
   gang: Partial<GangConfig>;
+  manageBladeburner: boolean;
+  /** Overrides for Bladeburner decisions (see lib/plan/bladeburner.ts DEFAULT_BB). */
+  bladeburner: Partial<BbConfig>;
+  /** Home RAM needed before the (~70 GB) Bladeburner manager runs. */
+  bladeburnerMinHomeGB: number;
 }
 const DEFAULTS: DaemonConfig = {
   tickMs: 2000,
@@ -59,6 +66,9 @@ const DEFAULTS: DaemonConfig = {
   stanek: {},
   go: {},
   gang: {},
+  manageBladeburner: true,
+  bladeburner: {},
+  bladeburnerMinHomeGB: 512,
 };
 
 interface DaemonState {
@@ -132,6 +142,7 @@ export async function main(ns: NS): Promise<void> {
     const wanted: string[] = [];
     if (s?.gang && cfg.manageGang) wanted.push(SCRIPTS.gangManager);
     if (cfg.go.enabled !== false) wanted.push(SCRIPTS.goManager);
+    if (bladeburnerWanted) wanted.push(SCRIPTS.bladeburnerManager);
     // keep room for the casino table while this install's $10b allowance is unclaimed
     if (s && cfg.casino && (s.earned.casino ?? 0) < CASINO_CAP) wanted.push(SCRIPTS.casinoTable);
     // plus room for the Stanek charger while it waits for a big enough block of home RAM
@@ -266,6 +277,39 @@ async function gangModule(ns: NS, data: FactionData, p: Plan, dcfg: DaemonConfig
     event("gang", `started gang manager (${gcfg.mode} mode)`);
 }
 
+const SIMULACRUM = "The Blade's Simulacrum";
+const GENESIS = "Stanek's Gift - Genesis";
+/** set while the Bladeburner manager should run, so the hacking manager leaves home RAM for it */
+let bladeburnerWanted = false;
+
+/**
+ * Start the Bladeburner manager and steer it. Joining is only allowed once Stanek's Gift is
+ * settled (accepted, or impossible/disabled): with SF7.3, joining grants The Blade's
+ * Simulacrum, and owning it blocks accepting the gift for the rest of the BitNode.
+ */
+function bladeburnerModule(
+  ns: NS,
+  data: FactionData,
+  p: Plan,
+  dcfg: DaemonConfig,
+  casinoRunning: boolean,
+  event: (k: string, msg: string, d?: unknown) => void,
+) {
+  bladeburnerWanted = false;
+  if (!dcfg.manageBladeburner) return;
+  if (!(data.sourceFiles["7"] > 0) && data.node !== 7) return; // no API access
+  const stanekSettled = data.installed.includes(GENESIS) || (stanekStatus !== null && stanekStatus.state !== "accepted");
+  const ctl: BladeburnerControl = { canJoin: stanekSettled, usePlayer: p.bladeburner && !casinoRunning, cfg: dcfg.bladeburner };
+  writeJson(ns, DATA.bladeburnerConfig, ctl);
+  if (ns.isRunning(SCRIPTS.bladeburnerManager, "home")) {
+    bladeburnerWanted = true;
+    return;
+  }
+  if (!stanekSettled || ns.getServerMaxRam("home") < dcfg.bladeburnerMinHomeGB) return;
+  bladeburnerWanted = true;
+  if (ns.exec(SCRIPTS.bladeburnerManager, "home")) event("bladeburner", "started Bladeburner manager");
+}
+
 function summarizeSleeves(list: { kind: string; faction?: string; crime?: string }[]): string {
   const counts = new Map<string, number>();
   for (const a of list) {
@@ -294,7 +338,17 @@ async function factionsModule(
   const r = m.long.window >= 120_000 ? m.long : m.short;
   const work = s.work as { factionName?: string } | null;
   const p = makePlan(
-    { data, observedRep: r.rep, income: r.income, sinceInstall: m.sinceInstall, currentWork: work?.factionName ?? null },
+    {
+      data,
+      observedRep: r.rep,
+      income: r.income,
+      sinceInstall: m.sinceInstall,
+      currentWork: work?.factionName ?? null,
+      bladeburner: {
+        inDivision: readJson<Partial<BladeburnerStatus>>(ns, DATA.bladeburner, {}).inDivision === true,
+        simulacrum: data.installed.includes(SIMULACRUM),
+      },
+    },
     cfg,
   );
 
@@ -331,6 +385,8 @@ async function factionsModule(
   } catch (e) {
     event("error", `stanek failed: ${e instanceof Error ? e.message : String(e)}`);
   }
+
+  bladeburnerModule(ns, data, p, dcfg, casinoRunning, event);
 
   // sleeves first, so none of them is sitting on the faction the player is about to work for
   if (dcfg.manageSleeves && s.sleeves > 0) {
@@ -475,6 +531,15 @@ function draw(
     L.push(`  ${pad(f, 24)} ${pad(num(rep), 9, true)} rep  ${pad(num(r.rep[f] ?? 0), 8, true)}/s  favor ${num(s.favor[f] ?? 0, 0)}`);
   if (s.invites.length) L.push(`  invites: ${s.invites.join(", ")}`);
 
+  const bb = readJson<Partial<BladeburnerStatus>>(ns, DATA.bladeburner, {});
+  if (bb.t && Date.now() - bb.t < 120_000) {
+    L.push("");
+    L.push(
+      bb.inDivision
+        ? `bladeburner: rank ${num(bb.rank ?? 0)}  ${bb.city} chaos ${(bb.chaos ?? 0).toFixed(0)}  stamina ${bb.stamina ? ((bb.stamina[0] / Math.max(1, bb.stamina[1])) * 100).toFixed(0) : "?"}%  ${bb.action ? `${bb.action.name} (${bb.why})` : bb.note}`
+        : `bladeburner: ${bb.note}`,
+    );
+  }
   L.push("");
   if (s.gang) {
     const g = readJson<{ mode?: string; tasks?: Record<string, number>; warfare?: boolean; wantedPenalty?: number }>(ns, DATA.gang, {});

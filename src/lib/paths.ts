@@ -13,6 +13,8 @@ export const DATA = {
   casino: "data/casino.txt", // casino.js outcome for the current install
   go: "data/go.txt", // IPvGO manager status
   goConfig: "data/go-config.txt", // IPvGO tunables
+  bladeburner: "data/bladeburner.txt", // Bladeburner manager status
+  bladeburnerConfig: "data/bladeburner-config.txt", // Bladeburner control, written by the daemon
 } as const;
 
 export const SCRIPTS = {
@@ -22,6 +24,7 @@ export const SCRIPTS = {
   gangManager: "gang/manager.js",
   casino: "casino.js", // launcher (small)
   goManager: "go/play.js",
+  bladeburnerManager: "bladeburner/manager.js",
   casinoTable: "casino/table.js", // the DOM-driving script (~36 GB)
   hack: "hack/w/h.js",
   grow: "hack/w/g.js",

@@ -179,3 +179,34 @@ test("NeuroFlux grind picks the fastest rep/s faction and doesn't hop on rep cha
   // current faction no longer eligible → best
   assert.equal(bestNfgFaction(data([1, 1, 1]), true, "D"), "C");
 });
+
+function bladeWorld() {
+  const w = world({ installed: ["HackA", "RepB"], money: 1e15 }); // nothing left to grind at CyberSec
+  w.factions.Bladeburners = fac({ joined: true, favor: 500, augs: ["BB-Aug"] }); // no work types
+  w.augs["BB-Aug"] = aug({ repReq: 1e5, price: 1e6, factions: ["Bladeburners"], stats: { hacking: 1.05 } });
+  return w;
+}
+
+test("Bladeburners rep is never planned as a donation, even with donation favor", () => {
+  const p = plan(input(bladeWorld()));
+  const c = [...p.ready, ...p.pending].find((x) => x.aug === "BB-Aug");
+  assert.ok(c, "BB-Aug is a candidate");
+  assert.equal(c.donation, 0);
+  assert.ok(!(p.install?.donate ?? []).some(([f]) => f === "Bladeburners"));
+});
+
+test("idle player goes to Bladeburner (before NeuroFlux) only without the Simulacrum", () => {
+  const w = bladeWorld();
+  const idle = plan(input(w, { bladeburner: { inDivision: true, simulacrum: false } }));
+  assert.equal(idle.bladeburner, true);
+  assert.equal(idle.work, null);
+  assert.equal(idle.crime, null);
+  // with the Simulacrum both run: NeuroFlux work + Bladeburner
+  const both = plan(input(w, { bladeburner: { inDivision: true, simulacrum: true } }));
+  assert.equal(both.bladeburner, true);
+  assert.equal(both.work?.faction, "CyberSec");
+  // not in the division: unchanged behavior
+  const none = plan(input(w));
+  assert.equal(none.bladeburner, false);
+  assert.equal(none.work?.faction, "CyberSec");
+});

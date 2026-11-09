@@ -13,6 +13,8 @@
 // expensive first, is the cheapest order. The Red Pill is the exception.
 import type { FactionData, FactionInfo } from "./data.js";
 import { NFG, RED_PILL, SKIP_FACTIONS } from "./data.js";
+
+const BLADEBURNERS = "Bladeburners";
 import { evaluate, type ReqContext } from "./requirements.js";
 
 export interface PlanConfig {
@@ -106,6 +108,8 @@ export interface Plan {
   buyNow: [string, string][];
   install: null | { reason: string; buy: [string, string][]; donate: [string, number][] };
   destroy: boolean;
+  /** Bladeburner actions may use the player's time (always with The Blade's Simulacrum). */
+  bladeburner: boolean;
   /** Why destroy is (not) happening: Red Pill installed, w0r1d_d43m0n seen/rooted, hack level vs req. */
   worldDaemon: { redPill: boolean; exists: boolean; inScan?: boolean; rooted: boolean; reqHack: number; hackLevel: number };
   /** Fraction of money the economy module may spend on servers/RAM. */
@@ -137,6 +141,8 @@ export interface PlanInput {
   sinceInstall: number; // ms
   /** Faction the player is working for right now, if any (keeps the NeuroFlux grind from hopping). */
   currentWork?: string | null;
+  /** Bladeburner manager state: in the division, and whether actions can run alongside work. */
+  bladeburner?: { inDivision: boolean; simulacrum: boolean };
 }
 
 export function augValue(stats: Record<string, number>, weights: Record<string, number>): number {
@@ -206,7 +212,9 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     const base = F[f].workRepPerSec * (cfg.focus || data.hasNeuroreceptor ? 1 : UNFOCUSED);
     return Math.max(base, input.observedRep[f] ?? 0);
   };
-  const canDonate = (f: string) => F[f].favor >= data.favorToDonate && data.repPerDollar > 0 && f !== data.gangFaction;
+  // Bladeburners rep only comes from rank; the game refuses donations there
+  const canDonate = (f: string) =>
+    F[f].favor >= data.favorToDonate && data.repPerDollar > 0 && f !== data.gangFaction && f !== BLADEBURNERS;
 
   const candidates: Candidate[] = [];
   for (const [a, info] of Object.entries(data.augs)) {
@@ -274,6 +282,8 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
   // ---------- work: best value-per-second rep grind ----------
   let work: Plan["work"] = null;
   let crime: string | null = null;
+  // with the Simulacrum, actions run alongside whatever work is chosen
+  let bladeburner = !!input.bladeburner?.inDivision && !!input.bladeburner.simulacrum;
   if (cfg.manageWork) {
     const grind = pending.filter((c) => c.repGap > 0 && c.donation === 0 && F[c.faction].bestWork && F[c.faction].joined);
     const target = grind.sort((a, b) => b.value / Math.max(1, b.repEta) - a.value / Math.max(1, a.repEta))[0];
@@ -285,7 +295,12 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
       const gangGated = pending.filter((c) => c.repGap > 0 && c.faction === data.gangFaction).length;
       const why = gangGated ? `${gangGated} augs wait on ${data.gangFaction} (gang respect)` : "no rep-gated augs left";
       const nfgFaction = bestNfgFaction(data, true, input.currentWork);
-      if (nfgFaction) {
+      const bb = input.bladeburner;
+      const bbAugsLeft = (F[BLADEBURNERS]?.augs ?? ["?"]).some((a) => a !== NFG && !owned.has(a));
+      if (bb?.inDivision && !bb.simulacrum && bbAugsLeft) {
+        bladeburner = true; // rank → Bladeburners rep, ahead of NeuroFlux and crime
+        notes.push(`${why}; Bladeburner actions for Bladeburners rep`);
+      } else if (nfgFaction) {
         work = { faction: nfgFaction, type: F[nfgFaction].bestWork!, focus: cfg.focus && !data.hasNeuroreceptor };
         notes.push(`${why}; building ${nfgFaction} rep for NeuroFlux`);
       } else {
@@ -385,6 +400,7 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     buyNow,
     install,
     destroy,
+    bladeburner,
     worldDaemon: { redPill: data.installed.includes(RED_PILL), ...data.worldDaemon, hackLevel: data.hackLevel },
     infraSpend,
     ready,
