@@ -54,6 +54,7 @@ daemon.js                 orchestrator: telemetry → metrics → planner module
 ├─ gang/manager.js        long-running gang manager, ticks on every gang update
 ├─ stanek/charge.js       one big charging process for Stanek's Gift (spawned after installs)
 ├─ go/play.js             IPvGO manager: our own MCTS player + matchup picker
+├─ stocks/manager.js      4S-forecast stock trader, longs + shorts (~37 GB, home ≥ 512 GB)
 ├─ bladeburner/manager.js Bladeburner: join, skills, city, actions (~73 GB, home ≥ 512 GB)
 └─ casino.js              blackjack save-scummer for the casino's $10b-per-install allowance
 lib/                      task runner, call proxy, metrics, network, file IO, formatting
@@ -132,6 +133,15 @@ and crime). Each update:
 - otherwise the contract/operation with the most expected rank/s (≥70% contracts, ≥80% ops;
   Raid and Stealth Retirement skipped), without abandoning an action halfway
 - skills bought greedily by weight per point; moves to the city with the largest estimated population
+
+**Stocks** (`lib/plan/stocks.ts` decides, `stocks/manager.ts` acts). Buys a WSE account, TIX API
+and 4S Market Data TIX API once each costs ≤20% of cash (they survive installs), then trades on
+every market update: long above a 0.55 forecast, short below 0.45 (SF8.2), best expected return
+(|forecast − 0.5| × volatility) first, closing when the forecast crosses 0.5. It keeps the
+planner's current infra share (≥10%) in cash and pauses while the casino bets. The planner
+counts the portfolio's liquidation value as money; `tasks/install.js` sells everything before
+buying augs, since installing wipes positions without paying out. No pre-4S (price-history)
+trading yet.
 
 **Coding contracts** (`lib/contracts.ts`, pure and unit-tested). All 30 contract types have a
 solver; Hamming codes and LZ compression follow the game's own algorithms, since answers must
@@ -229,6 +239,8 @@ faction-working.
 - [x] Bladeburner first: gym training to join early, Operation Daedalus as a win condition
 - [ ] Bladeburner: sleeves on Bladeburner actions (Infiltrate Synthoids, contracts)
 - [x] Coding contracts: all 30 types, per-build self-test against the game
-- [ ] Corporation, stock market
+- [x] Stock market: 4S forecasts, longs + shorts, liquidation before install
+- [ ] Stock market: pre-4S trading from price history
+- [ ] Corporation
 - [ ] IPvGO cheats (SF14 `ns.go.cheat`) where the success chance is worth the risk
 - [ ] Endgame: Daedalus → The Red Pill → w0r1d_d43m0n, then auto-continue into the next BN12 level

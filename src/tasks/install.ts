@@ -23,6 +23,16 @@ export async function main(ns: NS): Promise<void> {
   const bought: string[] = [];
   const money = () => ns.getPlayer().money;
 
+  // installing wipes stock positions without paying them out: sell everything first
+  // (the daemon killed stocks/manager.js before starting us)
+  const S = ns.stock;
+  if (S.hasTixApiAccess())
+    for (const sym of S.getSymbols()) {
+      const [long, , short] = S.getPosition(sym);
+      if (long > 0) S.sellStock(sym, long);
+      if (short > 0) S.sellShort(sym, short);
+    }
+
   for (const [f, amt] of a.donate) if (amt <= money()) sing.donateToFaction(f as FactionName, amt);
   for (const [f, aug] of a.buy) if (sing.purchaseAugmentation(f as FactionName, aug)) bought.push(aug);
 

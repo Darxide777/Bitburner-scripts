@@ -1,0 +1,92 @@
+// Stock trading decisions from 4S data. Pure logic → 0 GB; stocks/manager.ts acts.
+//
+// Each tick a stock moves up with probability `forecast`, by up to `volatility` of its
+// price, so the expected return per tick is ≈ (forecast − 0.5) × volatility.
+//   - close a long once forecast ≤ exitAt (0.5), a short once forecast ≥ 1 − exitAt
+//   - open where |forecast − 0.5| ≥ enterEdge (0.05), best expected return first,
+//     long above 0.5, short below (shorts need SF8.2 / BitNode 8)
+//   - keep at least reserveFrac of net worth in cash; skip trades too small for the
+//     commission to be noise
+// The game caps longs + shorts per stock at maxShares.
+
+export interface StockInfo {
+  sym: string;
+  forecast: number;
+  volatility: number;
+  ask: number;
+  bid: number;
+  maxShares: number;
+  long: number;
+  longAvg: number;
+  short: number;
+  shortAvg: number;
+}
+
+export interface StockConfig {
+  enterEdge: number;
+  /** close when the forecast is back at/through this (0.5 = as soon as it turns) */
+  exitAt: number;
+  allowShorts: boolean;
+  /** fraction of net worth kept as cash */
+  reserveFrac: number;
+  /** smallest order worth placing, as a multiple of the commission */
+  minOrderCommissions: number;
+}
+
+export const DEFAULT_STOCKS: StockConfig = {
+  enterEdge: 0.05,
+  exitAt: 0.5,
+  allowShorts: true,
+  reserveFrac: 0.1,
+  minOrderCommissions: 100,
+};
+
+export type Trade =
+  | { kind: "sellLong" | "sellShort"; sym: string; shares: number }
+  | { kind: "buyLong" | "buyShort"; sym: string; shares: number };
+
+/** What every position would pay if closed now (long at bid; a short returns its stake ± the move). */
+export function positionValue(s: StockInfo): number {
+  return s.long * s.bid + s.short * (2 * s.shortAvg - s.ask);
+}
+
+export const expectedReturn = (s: StockInfo) => Math.abs(s.forecast - 0.5) * s.volatility;
+
+export function decideTrades(stocks: StockInfo[], cash: number, commission: number, cfg: StockConfig = DEFAULT_STOCKS): Trade[] {
+  const trades: Trade[] = [];
+  let free = cash;
+
+  // 1. exits (selling also frees cash for the buys below)
+  for (const s of stocks) {
+    if (s.long > 0 && s.forecast <= cfg.exitAt) {
+      trades.push({ kind: "sellLong", sym: s.sym, shares: s.long });
+      free += s.long * s.bid - commission;
+    }
+    if (s.short > 0 && s.forecast >= 1 - cfg.exitAt) {
+      trades.push({ kind: "sellShort", sym: s.sym, shares: s.short });
+      free += s.short * (2 * s.shortAvg - s.ask) - commission;
+    }
+  }
+  const closed = new Set(trades.map((t) => `${t.sym}:${t.kind}`));
+
+  // 2. entries, best expected return first
+  const worth = cash + stocks.reduce((a, s) => a + positionValue(s), 0);
+  let budget = free - worth * cfg.reserveFrac;
+  const minOrder = commission * cfg.minOrderCommissions;
+  const candidates = stocks
+    .filter((s) => Math.abs(s.forecast - 0.5) >= cfg.enterEdge && (s.forecast > 0.5 || cfg.allowShorts))
+    .sort((a, b) => expectedReturn(b) - expectedReturn(a));
+  for (const s of candidates) {
+    if (budget < minOrder) break;
+    const goLong = s.forecast > 0.5;
+    // positions on the other side are being closed above (or will be next tick)
+    const held = (closed.has(`${s.sym}:sellLong`) ? 0 : s.long) + (closed.has(`${s.sym}:sellShort`) ? 0 : s.short);
+    const room = s.maxShares - held;
+    const price = goLong ? s.ask : s.bid; // shorts are opened at the bid
+    const shares = Math.floor(Math.min(room, (budget - commission) / price));
+    if (shares <= 0 || shares * price < minOrder) continue;
+    trades.push({ kind: goLong ? "buyLong" : "buyShort", sym: s.sym, shares });
+    budget -= shares * price + commission;
+  }
+  return trades;
+}

@@ -15,6 +15,8 @@ export const DATA = {
   goConfig: "data/go-config.txt", // IPvGO tunables
   contracts: "data/contracts.txt", // coding contracts: totals + ones we failed (never retried)
   contractsSelftest: "data/contracts-selftest.txt", // per-build check of every solver on dummy contracts
+  stocks: "data/stocks.txt", // stock manager status (portfolio value counts as money)
+  stocksConfig: "data/stocks-config.txt", // stock control, written by the daemon
   bladeburner: "data/bladeburner.txt", // Bladeburner manager status
   bladeburnerConfig: "data/bladeburner-config.txt", // Bladeburner control, written by the daemon
 } as const;
@@ -27,6 +29,7 @@ export const SCRIPTS = {
   casino: "casino.js", // launcher (small)
   goManager: "go/play.js",
   bladeburnerManager: "bladeburner/manager.js",
+  stocksManager: "stocks/manager.js",
   casinoTable: "casino/table.js", // the DOM-driving script (~36 GB)
   hack: "hack/w/h.js",
   grow: "hack/w/g.js",

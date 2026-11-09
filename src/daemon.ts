@@ -29,6 +29,8 @@ import type { HackConfig } from "./hack/manager.js";
 import type { ActArgs } from "./tasks/factions-act.js";
 import type { BladeburnerControl, BladeburnerStatus } from "./bladeburner/manager.js";
 import type { BbConfig } from "./lib/plan/bladeburner.js";
+import { DEFAULT_STOCKS, type StockConfig } from "./lib/plan/stocks.js";
+import type { StocksControl, StocksStatus } from "./stocks/manager.js";
 
 interface DaemonConfig {
   tickMs: number;
@@ -51,6 +53,10 @@ interface DaemonConfig {
   /** Solve coding contracts (tasks/contracts.js) every contractsEveryMs. */
   manageContracts: boolean;
   contractsEveryMs: number;
+  /** Trade stocks with 4S data (stocks/manager.js, ~37 GB) once home has stocksMinHomeGB. */
+  manageStocks: boolean;
+  stocks: Partial<StockConfig>;
+  stocksMinHomeGB: number;
   manageBladeburner: boolean;
   /** Overrides for Bladeburner decisions (see lib/plan/bladeburner.ts DEFAULT_BB). */
   bladeburner: Partial<BbConfig>;
@@ -71,6 +77,9 @@ const DEFAULTS: DaemonConfig = {
   gang: {},
   manageContracts: true,
   contractsEveryMs: 5 * 60_000,
+  manageStocks: true,
+  stocks: {},
+  stocksMinHomeGB: 512,
   manageBladeburner: true,
   bladeburner: {},
   bladeburnerMinHomeGB: 512,
@@ -145,6 +154,16 @@ export async function main(ns: NS): Promise<void> {
       if (!ns.isRunning(SCRIPTS.goManager, "home") && ns.exec(SCRIPTS.goManager, "home")) event("go", "started IPvGO manager");
     }
 
+    // ---- stocks: keep the planner's infra share in cash, pause while the casino bets ----
+    if (cfg.manageStocks) {
+      const casinoBetting = ns.isRunning(SCRIPTS.casinoTable, "home");
+      const reserveFrac = Math.max(DEFAULT_STOCKS.reserveFrac, current?.infraSpend ?? 0);
+      const ctl: StocksControl = { trade: !casinoBetting, cfg: { reserveFrac, ...cfg.stocks } };
+      writeJson(ns, DATA.stocksConfig, ctl);
+      if (!ns.isRunning(SCRIPTS.stocksManager, "home") && ns.getServerMaxRam("home") >= cfg.stocksMinHomeGB && ns.exec(SCRIPTS.stocksManager, "home"))
+        event("stocks", "started stock manager");
+    }
+
     // ---- coding contracts (and, once per build, the solver self-test on dummies) ----
     if (cfg.manageContracts) {
       if (!selftestStarted && readJson<{ build?: string }>(ns, DATA.contractsSelftest, {}).build !== build)
@@ -157,6 +176,7 @@ export async function main(ns: NS): Promise<void> {
     if (s?.gang && cfg.manageGang) wanted.push(SCRIPTS.gangManager);
     if (cfg.go.enabled !== false) wanted.push(SCRIPTS.goManager);
     if (bladeburnerWanted) wanted.push(SCRIPTS.bladeburnerManager);
+    if (cfg.manageStocks && ns.getServerMaxRam("home") >= cfg.stocksMinHomeGB) wanted.push(SCRIPTS.stocksManager);
     // keep room for the casino table while this install's $10b allowance is unclaimed
     if (s && cfg.casino && (s.earned.casino ?? 0) < CASINO_CAP) wanted.push(SCRIPTS.casinoTable);
     // plus room for the Stanek charger while it waits for a big enough block of home RAM
@@ -365,6 +385,9 @@ async function factionsModule(
     event("error", `faction scan failed: ${e instanceof Error ? e.message : String(e)}`);
     return null;
   }
+  // money in stocks is money: tasks/install.js liquidates before buying
+  const stocks = readJson<Partial<StocksStatus>>(ns, DATA.stocks, {});
+  if (stocks.t && Date.now() - stocks.t < 120_000 && (stocks.value ?? 0) > 0) data.money += stocks.value!;
   const r = m.long.window >= 120_000 ? m.long : m.short;
   const work = s.work as { factionName?: string } | null;
   const p = makePlan(
@@ -565,6 +588,13 @@ function draw(
     L.push(`  ${pad(f, 24)} ${pad(num(rep), 9, true)} rep  ${pad(num(r.rep[f] ?? 0), 8, true)}/s  favor ${num(s.favor[f] ?? 0, 0)}`);
   if (s.invites.length) L.push(`  invites: ${s.invites.join(", ")}`);
 
+  const st = readJson<Partial<StocksStatus>>(ns, DATA.stocks, {});
+  if (st.t && Date.now() - st.t < 120_000)
+    L.push(
+      st.access?.api4s
+        ? `stocks: ${money(st.value ?? 0)} in ${st.positions ?? 0} positions  realized ${money(st.realized ?? 0)}  ${st.trades ?? 0} trades${st.note ? `  (${st.note})` : ""}`
+        : `stocks: ${st.note}`,
+    );
   const bb = readJson<Partial<BladeburnerStatus>>(ns, DATA.bladeburner, {});
   if (bb.t && Date.now() - bb.t < 120_000) {
     L.push("");
