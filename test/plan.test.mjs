@@ -211,8 +211,11 @@ test("idle player goes to Bladeburner (before NeuroFlux) only without the Simula
   assert.equal(none.work?.faction, "CyberSec");
 });
 
-test("Bladeburner first: train the weakest combat stat before grinding, only once joining is safe", () => {
+test("Bladeburner first: train combat stats one at a time before grinding, only once joining is safe", () => {
   const w = world({ skills: { hacking: 100, strength: 150, defense: 40, dexterity: 120, agility: 90 } });
+  // order is fixed (str → def → dex → agi), not "lowest first", so near-equal stats don't hop
+  const even = world({ skills: { hacking: 100, strength: 7, defense: 6, dexterity: 6, agility: 6 } });
+  assert.equal(plan(input(even, { bladeburner: { inDivision: false, simulacrum: false, canJoin: true } })).train?.stat, "str");
   const p = plan(input(w, { bladeburner: { inDivision: false, simulacrum: false, canJoin: true } }));
   assert.deepEqual(p.train && [p.train.stat, p.train.gym], ["def", "Powerhouse Gym"]);
   assert.equal(p.work, null);

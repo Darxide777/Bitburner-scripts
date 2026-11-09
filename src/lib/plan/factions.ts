@@ -294,12 +294,12 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
   let bladeburner = !!input.bladeburner?.inDivision && !!input.bladeburner.simulacrum;
   let train: Plan["train"] = null;
   const bbIn = input.bladeburner;
-  const weakest = (["strength", "defense", "dexterity", "agility"] as const)
-    .map((k) => [k, data.skills[k] ?? 0] as const)
-    .sort((a, b) => a[1] - b[1])[0];
-  if (cfg.manageWork && cfg.bladeburnerFirst && bbIn?.canJoin && !bbIn.inDivision && weakest[1] < BB_JOIN_STAT) {
-    train = { stat: GYM_STAT[weakest[0]], gym: "Powerhouse Gym", city: "Sector-12", focus: cfg.focus && !data.hasNeuroreceptor };
-    notes.push(`training ${weakest[0]} (${Math.floor(weakest[1])}/${BB_JOIN_STAT}) to join Bladeburner`);
+  // one stat at a time, in a fixed order: picking the lowest would hop every tick while
+  // they're all close, restarting the workout each time
+  const short = (["strength", "defense", "dexterity", "agility"] as const).find((k) => (data.skills[k] ?? 0) < BB_JOIN_STAT);
+  if (cfg.manageWork && cfg.bladeburnerFirst && bbIn?.canJoin && !bbIn.inDivision && short) {
+    train = { stat: GYM_STAT[short], gym: "Powerhouse Gym", city: "Sector-12", focus: cfg.focus && !data.hasNeuroreceptor };
+    notes.push(`training ${short} (${Math.floor(data.skills[short] ?? 0)}/${BB_JOIN_STAT}) to join Bladeburner`);
   } else if (cfg.manageWork) {
     const grind = pending.filter((c) => c.repGap > 0 && c.donation === 0 && F[c.faction].bestWork && F[c.faction].joined);
     const target = grind.sort((a, b) => b.value / Math.max(1, b.repEta) - a.value / Math.max(1, a.repEta))[0];
