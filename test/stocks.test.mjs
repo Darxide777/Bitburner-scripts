@@ -76,3 +76,28 @@ test("pre-4S: estimates follow a simulated forecast, flips go neutral, warm-up s
   // without the down-run it stays a clean up-trend
   assert.equal(preForecast(flip.slice(0, 23)).forecast, 1);
 });
+
+test("pre-4S self-analysis: shadow trades, then a verdict on real entries", async () => {
+  const { newShadow, shadowStep, preVerdict } = await import("../dist/lib/plan/stocks.js");
+  const sh = newShadow();
+  // opens at the ask when bullish, closes at the bid when the forecast turns
+  shadowStep(sh, [stock("A", { forecast: 0.7, ask: 100, bid: 99 })], 0.1);
+  assert.deepEqual(sh.open.A, { side: "L", entry: 100 });
+  shadowStep(sh, [stock("A", { forecast: 0.45, ask: 111, bid: 110 })], 0.1);
+  assert.ok(Math.abs(sh.returns[0] - 0.1) < 1e-12, "bid 110 / ask 100 − 1");
+  assert.equal(sh.open.A, undefined);
+  // short side: open at the bid, close at the ask
+  shadowStep(sh, [stock("B", { forecast: 0.3, ask: 51, bid: 50 })], 0.1);
+  shadowStep(sh, [stock("B", { forecast: 0.6, ask: 40, bid: 39 })], 0.1);
+  assert.ok(Math.abs(sh.returns[1] - (50 / 40 - 1)) < 1e-12);
+
+  const cfg = { minTrades: 3, waitFor4sSec: 900 };
+  const good = [0.02, 0.03, 0.01];
+  assert.equal(preVerdict([0.02], 0.001, [], Infinity, cfg).trade, false, "still learning");
+  assert.equal(preVerdict(good, 0.001, [], Infinity, cfg).trade, true);
+  assert.equal(preVerdict(good, 0.05, [], Infinity, cfg).trade, false, "fees eat the edge");
+  assert.equal(preVerdict([-0.01, -0.02, 0.001], 0, [], Infinity, cfg).trade, false, "losing shadow");
+  assert.equal(preVerdict(good, 0.001, [-5, -5, 1], Infinity, cfg).trade, false, "real trades losing → pause");
+  assert.equal(preVerdict(good, 0.001, [], 600, cfg).trade, false, "4S in 10 min → wait");
+  assert.equal(preVerdict(good, 0.001, [], 0, cfg).trade, false, "4S affordable now");
+});

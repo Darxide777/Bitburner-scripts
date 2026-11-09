@@ -106,11 +106,13 @@ export interface PreConfig {
   enterEdge: number;
   /** a short window this far on the other side of 0.5 = trend flip */
   flipEdge: number;
-  /** judge the mode after this many closed trades: net loss → stop opening */
+  /** shadow trades needed before real ones; also the window for the real trades' brake */
   minTrades: number;
+  /** no new entries when the 4S API is affordable within this many seconds */
+  waitFor4sSec: number;
 }
 
-export const DEFAULT_PRE: PreConfig = { longWindow: 20, shortWindow: 8, enterEdge: 0.1, flipEdge: 0.1, minTrades: 10 };
+export const DEFAULT_PRE: PreConfig = { longWindow: 20, shortWindow: 8, enterEdge: 0.1, flipEdge: 0.1, minTrades: 10, waitFor4sSec: 900 };
 
 /** Share of up-moves and mean |relative move| over the last `window` moves of `prices`. */
 export function estimateFromPrices(prices: number[], window: number): { forecast: number; volatility: number; moves: number } {
@@ -139,4 +141,69 @@ export function preForecast(prices: number[], cfg: PreConfig = DEFAULT_PRE): { f
   const flipped =
     (long.forecast > 0.5 && short.forecast <= 0.5 - cfg.flipEdge) || (long.forecast < 0.5 && short.forecast >= 0.5 + cfg.flipEdge);
   return { forecast: flipped ? 0.5 : long.forecast, volatility: long.volatility, ready: true };
+}
+
+// ---------- pre-4S self-analysis ----------
+//
+// A shadow trader paper-trades every stock on the same signals (entry at the ask, exit at
+// the bid, so the spread counts), costing nothing. Real pre-4S entries are only allowed
+// while its recent closed trades beat the commissions, and the real trades' own recent
+// record hasn't turned negative. Separately: don't open anything when the 4S API is about
+// to be affordable — those trades would only cost fees and hold cash 4S needs.
+
+export interface ShadowState {
+  open: Record<string, { side: "L" | "S"; entry: number }>;
+  /** fractional returns of closed shadow trades, newest last */
+  returns: number[];
+}
+
+export const newShadow = (): ShadowState => ({ open: {}, returns: [] });
+
+/** Advance the shadow trader one tick on `stocks` (estimated forecasts). */
+export function shadowStep(st: ShadowState, stocks: StockInfo[], enterEdge: number, exitAt = 0.5, keep = 50): void {
+  for (const s of stocks) {
+    const pos = st.open[s.sym];
+    if (pos && ((pos.side === "L" && s.forecast <= exitAt) || (pos.side === "S" && s.forecast >= 1 - exitAt))) {
+      st.returns.push(pos.side === "L" ? s.bid / pos.entry - 1 : pos.entry / s.ask - 1);
+      delete st.open[s.sym];
+    }
+    if (!st.open[s.sym]) {
+      if (s.forecast >= 0.5 + enterEdge) st.open[s.sym] = { side: "L", entry: s.ask };
+      else if (s.forecast <= 0.5 - enterEdge) st.open[s.sym] = { side: "S", entry: s.bid };
+    }
+  }
+  if (st.returns.length > keep) st.returns.splice(0, st.returns.length - keep);
+}
+
+export interface PreVerdict {
+  trade: boolean;
+  why: string;
+  /** mean shadow return per trade, net of the commission share */
+  edge: number;
+  samples: number;
+}
+
+/**
+ * Should real pre-4S entries be allowed now?
+ * `costFrac`: both legs' commissions as a fraction of a typical position.
+ * `liveRecent`: P/L of the last real closed trades (newest last).
+ * `etaTo4sSec`: time until the 4S API is affordable (Infinity if unknown).
+ */
+export function preVerdict(
+  shadow: number[],
+  costFrac: number,
+  liveRecent: number[],
+  etaTo4sSec: number,
+  cfg: { minTrades: number; waitFor4sSec: number },
+): PreVerdict {
+  const n = shadow.length;
+  const edge = n ? shadow.reduce((a, b) => a + b, 0) / n - costFrac : 0;
+  if (etaTo4sSec <= cfg.waitFor4sSec)
+    return { trade: false, why: `4S affordable in ~${Math.ceil(etaTo4sSec / 60)} min: waiting`, edge, samples: n };
+  if (n < cfg.minTrades) return { trade: false, why: `learning: ${n}/${cfg.minTrades} shadow trades`, edge, samples: n };
+  if (edge <= 0) return { trade: false, why: `shadow trades don't beat fees (${(edge * 100).toFixed(2)}%/trade)`, edge, samples: n };
+  const live = liveRecent.slice(-cfg.minTrades);
+  if (live.length >= cfg.minTrades && live.reduce((a, b) => a + b, 0) < 0)
+    return { trade: false, why: "recent real trades lost money: paused", edge, samples: n };
+  return { trade: true, why: `shadow edge +${(edge * 100).toFixed(2)}%/trade over ${n}`, edge, samples: n };
 }

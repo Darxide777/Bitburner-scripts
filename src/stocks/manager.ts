@@ -10,8 +10,12 @@ import {
   decideTrades,
   DEFAULT_PRE,
   DEFAULT_STOCKS,
+  newShadow,
   positionValue,
   preForecast,
+  preVerdict,
+  shadowStep,
+  type ShadowState,
   type PreConfig,
   type StockConfig,
   type StockInfo,
@@ -44,8 +48,8 @@ export interface StocksStatus {
   note: string;
   /** "4S", "pre-4S" or "waiting" */
   mode: string;
-  /** pre-4S results (kept across restarts): it stops opening positions if these lose money */
-  pre: { realized: number; closed: number; stopped: boolean };
+  /** pre-4S results (kept across restarts) and the self-analysis verdict on real entries */
+  pre: { realized: number; closed: number; stopped: boolean; recent?: number[]; verdict?: string; edge?: number; samples?: number; etaTo4sMin?: number };
 }
 
 export async function main(ns: NS): Promise<void> {
@@ -58,7 +62,10 @@ export async function main(ns: NS): Promise<void> {
   let shortsOk = true;
   const prev = readJson<Partial<StocksStatus>>(ns, DATA.stocks, {});
   const pre = { realized: 0, closed: 0, stopped: false, ...prev.pre };
-  const saved = readJson<{ t?: number; prices?: Record<string, number[]> }>(ns, HISTORY, {});
+  const saved = readJson<{ t?: number; prices?: Record<string, number[]>; shadow?: ShadowState }>(ns, HISTORY, {});
+  // the shadow's record is evidence about the estimator, not the moment: keep it across gaps
+  const shadow: ShadowState = saved.shadow ?? newShadow();
+  let lastAllow: boolean | null = null;
   // a short gap (restart) is fine; a long one would splice two unrelated stretches together
   const history = new Map<string, number[]>(Date.now() - (saved.t ?? 0) < 120_000 ? Object.entries(saved.prices ?? {}) : []);
 
@@ -124,7 +131,34 @@ export async function main(ns: NS): Promise<void> {
       }
       return { sym, forecast, volatility, ask, bid, maxShares: S.getMaxShares(sym), long, longAvg, short, shortAvg };
     });
-    writeJson(ns, HISTORY, { t: Date.now(), prices: Object.fromEntries(history) });
+    // ---- pre-4S self-analysis: paper trades, 4S ETA, verdict ----
+    let allowEntries = true;
+    if (!api) {
+      const readyStocks = stocks.filter((s) => ready.has(s.sym));
+      shadowStep(shadow, readyStocks, preCfg.enterEdge, cfg.exitAt);
+      const worth = cash() + stocks.reduce((a, s) => a + positionValue(s), 0);
+      const needed = C.MarketDataTixApi4SCost / frac;
+      const income = readJson<{ metrics?: { long?: { income?: number } } }>(ns, DATA.status, {}).metrics?.long?.income ?? 0;
+      const eta = worth >= needed ? 0 : income > 0 ? (needed - worth) / income : Infinity;
+      pre.etaTo4sMin = Number.isFinite(eta) ? eta / 60 : undefined;
+      // net worth covers 4S but cash doesn't: free the cash (4S is bought next tick)
+      if (worth >= needed && cash() < needed && ctl.trade) {
+        for (const s of stocks) {
+          if (s.long > 0) S.sellStock(s.sym, s.long);
+          if (s.short > 0) S.sellShort(s.sym, s.short);
+        }
+        appendJsonl(ns, DATA.events, { t: Date.now(), kind: "stocks", msg: "sold pre-4S positions to buy the 4S TIX API" });
+      }
+      const typical = Math.max(1, (worth * (1 - cfg.reserveFrac)) / 4);
+      const v = preVerdict(shadow.returns, (2 * C.StockMarketCommission) / typical, pre.recent ?? [], eta, preCfg);
+      allowEntries = v.trade;
+      if (v.trade !== lastAllow) {
+        appendJsonl(ns, DATA.events, { t: Date.now(), kind: "stocks", msg: `pre-4S entries ${v.trade ? "on" : "off"}: ${v.why}` });
+        lastAllow = v.trade;
+      }
+      Object.assign(pre, { verdict: v.why, edge: v.edge, samples: v.samples, stopped: !v.trade });
+    }
+    writeJson(ns, HISTORY, { t: Date.now(), prices: Object.fromEntries(history), shadow });
 
     if (ctl.trade) {
       const bySym = new Map(stocks.map((s) => [s.sym, s]));
@@ -132,7 +166,7 @@ export async function main(ns: NS): Promise<void> {
       // neutral 0.5 estimate would otherwise close positions); a losing record stops entries
       const tradeCfg = api ? cfg : { ...cfg, enterEdge: preCfg.enterEdge };
       let decided = decideTrades(stocks.filter((s) => ready.has(s.sym)), cash(), C.StockMarketCommission, tradeCfg);
-      if (!api && pre.stopped) decided = decided.filter((t) => t.kind === "sellLong" || t.kind === "sellShort");
+      if (!allowEntries) decided = decided.filter((t) => t.kind === "sellLong" || t.kind === "sellShort");
       for (const t of decided) {
         const s = bySym.get(t.sym)!;
         let price = 0;
@@ -141,14 +175,20 @@ export async function main(ns: NS): Promise<void> {
           if (price) {
             const pl = t.shares * (price - s.longAvg) - 2 * C.StockMarketCommission; // both legs' fees
             realized += pl;
-            if (!api) [pre.realized, pre.closed] = [pre.realized + pl, pre.closed + 1];
+            if (!api) {
+              [pre.realized, pre.closed] = [pre.realized + pl, pre.closed + 1];
+              pre.recent = [...(pre.recent ?? []), pl].slice(-20);
+            }
           }
         } else if (t.kind === "sellShort") {
           price = S.sellShort(t.sym, t.shares);
           if (price) {
             const pl = t.shares * (s.shortAvg - price) - 2 * C.StockMarketCommission;
             realized += pl;
-            if (!api) [pre.realized, pre.closed] = [pre.realized + pl, pre.closed + 1];
+            if (!api) {
+              [pre.realized, pre.closed] = [pre.realized + pl, pre.closed + 1];
+              pre.recent = [...(pre.recent ?? []), pl].slice(-20);
+            }
           }
         } else if (t.kind === "buyLong") price = S.buyStock(t.sym, t.shares);
         else

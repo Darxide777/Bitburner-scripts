@@ -194,7 +194,12 @@ the last 20 ticks, volatility ≈ 2 × mean |move|; a short 8-tick window that s
 means the trend flipped, and the stock is treated as neutral (closes positions, no entries).
 Entries need |forecast − 0.5| ≥ 0.1; stocks without a full window are left alone, and the price
 history is saved (`data/stock-history.txt`) so restarts don't need a warm-up. Its closed trades
-are tracked separately: after 10, a net loss stops new entries for good (exits only).
+decide by themselves whether to trade at all. A *shadow trader* paper-trades every stock on the
+same signals (entry at the ask, exit at the bid), and real entries are allowed only once it has
+≥10 closed trades whose mean return beats both legs' commissions on a typical position, while
+the last 10 real pre-4S trades aren't net negative (re-checked every tick, so it can switch on
+and off). No new entries when the 4S API is affordable within 15 min (net worth vs. its cost ÷
+the 20% rule, at the measured income); once net worth covers it, positions are sold to buy it.
 `"stocks": ...` / `preCfg` tune it; `pre4s: false` in the stock control turns it off.
 
 **Infiltration** (`lib/plan/infiltration.ts` decides, `infiltrate.ts` plays). The game punishes
