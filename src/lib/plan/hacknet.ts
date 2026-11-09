@@ -108,14 +108,27 @@ export function valueOptions(v: ValueInput, cfg: HacknetConfig = DEFAULT_HACKNET
 
 export type SpendDecision = { kind: "buy"; option: HashOption } | { kind: "sell"; count: number } | { kind: "save"; option: HashOption } | null;
 
+/** Options worth saving for: beat selling, fit the cache, and are reachable before the run ends. */
+export function reachable(o: HashOption, hashes: number, production: number, remainingSec: number): boolean {
+  return hashes >= o.cost || (production > 0 && (o.cost - hashes) / production <= remainingSec);
+}
+
 /**
- * Buy the best option when affordable; save toward it if it beats selling and fits the
- * cache; otherwise sell everything (hashes at capacity are wasted).
+ * Buy the best option when affordable; save toward it if it beats selling, fits the cache
+ * and can be reached before the run ends; otherwise sell (hashes at capacity are wasted).
  */
-export function decideSpend(options: HashOption[], hashes: number, capacity: number): SpendDecision {
+export function decideSpend(
+  options: HashOption[],
+  hashes: number,
+  capacity: number,
+  production = Infinity,
+  remainingSec = Infinity,
+): SpendDecision {
   const sell = options.find((o) => o.name === SELL);
   const sellPer = sell?.perHash ?? 0;
-  const best = options.find((o) => o.name !== SELL && o.perHash > sellPer && o.cost <= capacity);
+  const best = options.find(
+    (o) => o.name !== SELL && o.perHash > sellPer && o.cost <= capacity && reachable(o, hashes, production, remainingSec),
+  );
   if (best) return hashes >= best.cost ? { kind: "buy", option: best } : { kind: "save", option: best };
   if (sell && hashes >= sell.cost) return { kind: "sell", count: Math.floor(hashes / sell.cost) };
   return null;

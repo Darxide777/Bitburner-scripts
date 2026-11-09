@@ -10,6 +10,7 @@ import {
   chooseUpgrade,
   CONTRACT,
   decideSpend,
+  reachable,
   DEFAULT_HACKNET,
   expectedRunMs,
   MAX_MONEY,
@@ -119,9 +120,16 @@ export async function main(ns: NS): Promise<void> {
     );
     status.options = options.slice(0, 6).map(({ name, target, cost, perHash, why }) => ({ name, target, cost, perHash, why }));
 
+    // ---- production ----
+    const servers: ServerInfo[] = [];
+    for (let i = 0; i < n; i++) {
+      const s = H.getNodeStats(i);
+      servers.push({ level: s.level, ram: s.ram, cores: s.cores, production: s.production });
+      status.production += s.production;
+    }
     // ---- spend hashes (a few purchases per tick) ----
     for (let k = 0; k < 20; k++) {
-      const d = decideSpend(options, H.numHashes(), capacity);
+      const d = decideSpend(options, H.numHashes(), capacity, status.production, remainingSec);
       if (!d) break;
       if (d.kind === "save") {
         status.decision = `saving for ${d.option.name}${d.option.target ? ` on ${d.option.target}` : ""} (${Math.floor(H.numHashes())}/${Math.ceil(d.option.cost)})`;
@@ -149,13 +157,6 @@ export async function main(ns: NS): Promise<void> {
       options.sort((a, b) => b.perHash - a.perHash);
     }
 
-    // ---- production ----
-    const servers: ServerInfo[] = [];
-    for (let i = 0; i < n; i++) {
-      const s = H.getNodeStats(i);
-      servers.push({ level: s.level, ram: s.ram, cores: s.cores, production: s.production });
-      status.production += s.production;
-    }
     if (!ns.fileExists("Formulas.exe", "home")) status.note = "no Formulas.exe: not buying production yet";
     else if (!ctl.buy) status.note = "not buying (casino running)";
     else {
@@ -194,7 +195,8 @@ export async function main(ns: NS): Promise<void> {
         }
       }
       // the best non-sell option no longer fits the cache: grow the cache (cheapest server first)
-      const want = options.find((o) => o.name !== SELL && o.perHash > (options.find((x) => x.name === SELL)?.perHash ?? 0));
+      const sellPer = options.find((x) => x.name === SELL)?.perHash ?? 0;
+      const want = options.find((o) => o.name !== SELL && o.perHash > sellPer && reachable(o, status.hashes, status.production, remainingSec));
       if (want && want.cost > capacity && n > 0) {
         let best = 0;
         for (let i = 1; i < n; i++) if (H.getCacheUpgradeCost(i, 1) < H.getCacheUpgradeCost(best, 1)) best = i;

@@ -66,3 +66,11 @@ test("expected run length: median of the last 5 runs", () => {
   assert.equal(expectedRunMs([9e8, 24, 28, 20, 19, 18, 133].map((m) => m * 60_000), 1), 20 * 60_000);
   assert.equal(expectedRunMs([5], 777), 777);
 });
+
+test("doesn't save for an option it can't reach before the run ends", () => {
+  const o = valueOptions(base({ bladeburner: { active: true, rank: 10, rankPerSec: 0.01, finalRank: 400_000 } }));
+  assert.equal(o[0].name, BB_RANK);
+  assert.equal(decideSpend(o, 10, 1000, 0.001, 1800).kind, "sell", "250 hashes at 0.001/s = 69 h");
+  assert.equal(decideSpend(o, 10, 1000, 1, 1800).kind, "save", "240 s away");
+  assert.equal(decideSpend(o, 300, 1000, 0, 0).kind, "buy", "already affordable");
+});
