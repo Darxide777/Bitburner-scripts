@@ -200,11 +200,21 @@ const CASINO_CAP = 10e9;
  * Start casino.js when this install's $10b casino allowance is unclaimed and normal income
  * would take more than 30 minutes to make that much — i.e. at the start of a BitNode, not late game.
  * casino.js records its outcome per install, so a failed attempt isn't retried every tick.
+ *
+ * Every save-scum reload restarts the daemon, so the metric windows are always empty while
+ * the casino runs (income reads 0). Rates that need no history (gang, hacking manager) and
+ * money on hand are checked too; otherwise a late-game install burns ~15 min of reloads
+ * for what the gang makes in seconds.
  */
 function casinoModule(ns: NS, s: Snapshot, m: Metrics, event: (k: string, msg: string, d?: unknown) => void) {
   if (ns.isRunning(SCRIPTS.casinoTable, "home")) return;
   if ((s.earned.casino ?? 0) >= CASINO_CAP) return;
-  const income = Math.max(m.short.income, m.long.income);
+  if (s.money >= CASINO_CAP) return; // it could at most double what we already hold
+  // don't trust an empty window: give the rate trackers a minute after (re)start
+  if (m.short.window < 60_000) return;
+  const hackRate = readJson<{ expectedPerSec?: number }>(ns, DATA.hack, {}).expectedPerSec ?? 0;
+  const gangRate = (s.gang?.moneyRate ?? 0) * 5; // moneyGainRate is per 200 ms gang cycle
+  const income = Math.max(m.short.income, m.long.income, gangRate + hackRate);
   if (income * 1800 >= CASINO_CAP) return;
   const last = readJson<{ lastAugReset?: number }>(ns, DATA.casino, {});
   if (last.lastAugReset === s.lastAugReset) return;

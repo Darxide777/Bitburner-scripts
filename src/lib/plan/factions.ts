@@ -106,6 +106,8 @@ export interface Plan {
   buyNow: [string, string][];
   install: null | { reason: string; buy: [string, string][]; donate: [string, number][] };
   destroy: boolean;
+  /** Why destroy is (not) happening: Red Pill installed, w0r1dd43m0n seen/rooted, hack level vs req. */
+  worldDaemon: { redPill: boolean; exists: boolean; rooted: boolean; reqHack: number; hackLevel: number };
   /** Fraction of money the economy module may spend on servers/RAM. */
   infraSpend: number;
   /** Augs that could be bought right now if we installed (purchase order). */
@@ -381,6 +383,7 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     buyNow,
     install,
     destroy,
+    worldDaemon: { redPill: data.installed.includes(RED_PILL), ...data.worldDaemon, hackLevel: data.hackLevel },
     infraSpend,
     ready,
     readyCost: readyCost + donations,

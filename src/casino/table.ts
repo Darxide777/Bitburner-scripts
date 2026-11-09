@@ -17,6 +17,8 @@ import { DATA } from "../lib/paths.js";
 const CAP = 10e9;
 const MAX_BET = 100e6;
 const MAX_RELOADS = 3000;
+/** Money on hand past which the casino's $10b can't matter (100× the cap). */
+const NOT_WORTH_IT = 100 * CAP;
 const STATS_KEY = "bb-casino-stats";
 const STATE_FILE = DATA.casino;
 
@@ -66,6 +68,9 @@ export async function main(ns: NS): Promise<void> {
   };
 
   if (casinoWinnings() >= CAP) return finish("already at the $10b cap for this install", true);
+  // late game: $10b is noise, and every loss reloads the page (restarting every script)
+  if (ns.getServerMoneyAvailable("home") >= NOT_WORTH_IT)
+    return finish(`not worth it: already holding $${ns.format.number(ns.getServerMoneyAvailable("home"))}`, true);
   if (stats.reloads >= MAX_RELOADS) return finish(`stopped after ${MAX_RELOADS} reloads (safety cap)`);
   if (stats.errors > MAX_ERRORS) return finish(`stopped after ${MAX_ERRORS} reloads for unexpected table states`);
 
