@@ -125,6 +125,7 @@ export async function main(ns: NS): Promise<void> {
     const cashBefore = ns.getServerMoneyAvailable("home");
     const started = Date.now();
     // start through the object itself when we can see it (the button press is the fallback)
+    cached = null; // a new run: a new object
     const atIntro = findInfiltration(doc);
     if (atIntro && typeof atIntro.startInfiltration === "function") atIntro.startInfiltration();
     else press(startBtn);
@@ -176,7 +177,12 @@ export async function main(ns: NS): Promise<void> {
       trace(
         `run ended without success: infiltration ${s ? `found (stage fields: ${Object.keys(s.stage).join(",")}; results "${s.results}")` : "not found"}; buttons: ${[...doc.querySelectorAll("button")].map((b) => (b.textContent ?? "").trim()).filter(Boolean).slice(0, 15).join(" | ")}`,
       );
-      s?.cancel?.(); // don't leave a stuck infiltration behind
+      // don't leave a stuck infiltration behind: its timers would keep failing levels (HP)
+      if (s?.cancel) s.cancel();
+      else {
+        const cancelBtn = button(doc, (b) => b === "Cancel Infiltration" || b === "Cancel");
+        if (cancelBtn) press(cancelBtn);
+      }
     }
 
     // ---- reward ----
@@ -211,21 +217,42 @@ export async function main(ns: NS): Promise<void> {
   }
 }
 
-/** The Infiltration object: every stage component gets it as its `state` prop. */
+const isInfil = (s: unknown): s is InfilObj =>
+  !!s && typeof s === "object" && "stage" in s && "maxLevel" in s && typeof (s as InfilObj).stage === "object";
+
+/** found once per run: the same object lives for the whole infiltration */
+let cached: InfilObj | null = null;
+
+/**
+ * The Infiltration object. The screen's root component reads it directly (no props), so
+ * walking *up* from its buttons never meets it; the stage components below get it as their
+ * `state` prop. So: climb from any element to the top of the React tree, then search *down*
+ * for the first component with such a prop. Cached while the screen is up.
+ */
 function findInfiltration(doc: Document): InfilObj | null {
-  for (const el of doc.querySelectorAll("h5, button")) {
-    const key = Object.keys(el).find((k) => k.startsWith("__reactFiber$"));
-    let f = key ? (el as unknown as Record<string, FiberNode>)[key] : undefined;
-    for (let depth = 0; f && depth < 40; depth++, f = f.return) {
-      const s = f.memoizedProps?.state as InfilObj | undefined;
-      if (s && typeof s === "object" && s.stage && typeof s.stage === "object" && "maxLevel" in s) return s;
-    }
+  const onScreen = !!button(doc, (s) => s === "Cancel Infiltration" || s === "Start") || findText(doc, "Infiltration successful!");
+  if (!onScreen) return (cached = null);
+  if (cached) return cached;
+  const el = doc.querySelector("button");
+  const key = el && Object.keys(el).find((k) => k.startsWith("__reactFiber$"));
+  let top = key ? (el as unknown as Record<string, FiberNode>)[key] : undefined;
+  while (top?.return) top = top.return;
+  // iterative DFS over child/sibling links
+  const stack: FiberNode[] = top ? [top] : [];
+  for (let visited = 0; stack.length && visited < 50_000; visited++) {
+    const f = stack.pop()!;
+    const s = f.memoizedProps?.state;
+    if (isInfil(s)) return (cached = s);
+    if (f.sibling) stack.push(f.sibling);
+    if (f.child) stack.push(f.child);
   }
   return null;
 }
 
 interface FiberNode {
   return?: FiberNode;
+  child?: FiberNode;
+  sibling?: FiberNode;
   memoizedProps?: Record<string, unknown>;
 }
 
