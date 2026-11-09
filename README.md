@@ -113,9 +113,13 @@ collects faction/aug state and the planner decides:
   discount), so everything is bought at install time, most expensive first (prereqs first).
   Where favor allows, donations cover rep gaps (never at factions without work, e.g.
   Bladeburners and Church of the Machine God, which refuse them). The Red Pill is bought immediately.
-- *install*: when the next valuable aug is further away than `installPatience` × the time
-  since the last install (with at least `minAugsToInstall` new augs), when the run exceeds
-  `maxRunMs`, or when installing would unlock donations at a faction with augs left. Leftover
+- *install*: by the marginal value theorem — once waiting for the best pending aug earns less
+  value per second (its value ÷ its ETA) than recent runs earned on average (aug value
+  installed ÷ run length over the last 5 runs: `data/runs.txt` lengths, valued from the augs each
+  install event in `data/events.txt` bought), with at least `minAugsToInstall` new augs. Until 3
+  runs can be valued, the old rule: next aug further away than `installPatience` × the run so far.
+  Also when the run exceeds `maxRunMs`, or when installing would unlock donations at a faction
+  that takes them. `plan.installRates` shows both rates. Leftover
   money goes to home RAM, then NeuroFlux levels.
 - *infra spend*: the economy module's budget tapers from 50% to 5% as install approaches,
   because cloud servers are wiped on install.
@@ -370,7 +374,7 @@ it in the hacking reserve, and `tasks/restart.js` restarts it on every new build
 - [x] Economy: TOR/programs, home RAM/cores, cloud servers
 - [x] Factions & augments: invites with city conflicts, travel, backdoors, rep-grind choice,
       escalation-aware purchase order, donations, NeuroFlux, install timing, w0r1d_d43m0n
-- [ ] Learn install timing from `runs.txt` history instead of fixed `installPatience`
+- [x] Install timing learned from run history (marginal value of waiting vs. recent runs' average)
 - [x] Casino: blackjack save-scumming for $10b per install
 - [x] Stanek's Gift: acceptance, layout solver, per-install charging
 - [x] IPvGO: rules engine, MCTS player, self-optimizing matchup choice

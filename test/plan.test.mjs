@@ -359,3 +359,34 @@ test("combat gates train at the best gym, one stat at a time in a fixed order", 
   w.skills.strength = 80;
   assert.equal(plan(input(w)).train?.stat, "def");
 });
+
+function installWorld() {
+  // 6 cheap ready augs and one valuable one 1000 rep away at CyberSec (10 rep/s → 100 s)
+  const w = world({ money: 1e15, installed: ["HackA", "RepB"] });
+  for (let i = 0; i < 6; i++) {
+    w.augs[`R${i}`] = aug({ repReq: 1, price: 1e3, factions: ["CyberSec"], stats: { hacking: 1.01 } });
+    w.factions.CyberSec.augs.push(`R${i}`);
+  }
+  w.augs.Big = aug({ repReq: 6000, price: 1e3, factions: ["CyberSec"], stats: { hacking: 1.5 } });
+  w.factions.CyberSec.augs.push("Big");
+  return w;
+}
+
+test("install timing: marginal value of waiting vs. recent runs' average rate", () => {
+  const since = { sinceInstall: 3600_000 };
+  const p0 = plan(input(installWorld(), { ...since, avgRunRate: 1e-9 }));
+  assert.ok(p0.installRates.marginal > 0);
+  assert.equal(p0.install, null, "waiting beats a poor history: keep going");
+  const p1 = plan(input(installWorld(), { ...since, avgRunRate: 1e3 }));
+  assert.ok(p1.install && p1.install.reason.startsWith("waiting earns"), p1.install?.reason);
+  // no history: the old patience rule (next aug 100 s away vs 0.5 × 1 h → no install)
+  assert.equal(plan(input(installWorld(), { ...since, avgRunRate: null })).install, null);
+});
+
+test("no 'unlocks donations' install for factions that take no donations", () => {
+  const w = installWorld();
+  w.factions.Church = fac({ joined: true, favor: 100, favorGain: 100, augs: ["ChurchAug"] }); // no work types
+  w.augs.ChurchAug = aug({ repReq: 1e9, factions: ["Church"], stats: { hacking: 1.2 } });
+  const p = plan(input(w, { sinceInstall: 3600_000, avgRunRate: 1e-9 }));
+  assert.ok(!p.install || !p.install.reason.includes("donations at Church"), p.install?.reason);
+});

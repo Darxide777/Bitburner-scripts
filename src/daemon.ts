@@ -34,6 +34,7 @@ import { DEFAULT_STOCKS, type StockConfig } from "./lib/plan/stocks.js";
 import type { StocksControl, StocksStatus } from "./stocks/manager.js";
 import type { HacknetControl, HacknetStatus } from "./hacknet/manager.js";
 import { expectedRunMs, type HacknetConfig } from "./lib/plan/hacknet.js";
+import { averageRate, valueRuns, type RunRecord } from "./lib/plan/runs.js";
 import type { CorpConfig } from "./lib/plan/corp.js";
 import { chooseTarget, cooldownAfter, DEFAULT_INFILTRATION, type InfiltrationConfig } from "./lib/plan/infiltration.js";
 import { CONGRUITY, entropyCost, evaluateGrafts, type GraftRow } from "./lib/plan/grafting.js";
@@ -340,6 +341,35 @@ export async function main(ns: NS): Promise<void> {
 
 /** Kill everything on home except the daemon (before install/destroy, which wipe scripts anyway). */
 let lastReserve = 0;
+let runRateCache: { t: number; rate: number | null } = { t: 0, rate: null };
+
+/**
+ * Average aug value per second of the last 5 runs: each run (data/runs.txt) valued by the
+ * augs its install event bought (data/events.txt), with the planner's own aug values.
+ */
+function recentRunRate(ns: NS, data: FactionData, cfg: PlanConfig): number | null {
+  if (Date.now() - runRateCache.t < 5 * 60_000) return runRateCache.rate;
+  const jsonl = <T,>(file: string): T[] =>
+    ns
+      .read(file)
+      .split("\n")
+      .filter(Boolean)
+      .flatMap((l) => {
+        try {
+          return [JSON.parse(l) as T];
+        } catch {
+          return [];
+        }
+      });
+  const runs = jsonl<RunRecord>(DATA.runs);
+  const installs = jsonl<{ t: number; kind: string; msg: string; data?: { bought?: string[]; nfg?: number } }>(DATA.events)
+    .filter((e) => e.kind === "install" && e.msg.startsWith("installing ") && e.data?.bought)
+    .map((e) => ({ t: e.t, bought: e.data!.bought!, nfg: e.data!.nfg ?? 0 }));
+  const valueOf = (a: string) => augValue(data.augs[a]?.stats ?? {}, cfg.weights) + (cfg.augBonus[a] ?? 0);
+  const valued = valueRuns(runs, installs, valueOf, augValue(data.augs[NFG]?.stats ?? {}, cfg.weights));
+  runRateCache = { t: Date.now(), rate: averageRate(valued) };
+  return runRateCache.rate;
+}
 
 /** Home RAM picture for the status file: what each task costs, who uses home, the reserve. */
 function ramReport(ns: NS) {
@@ -676,6 +706,7 @@ async function factionsModule(
       sinceInstall: m.sinceInstall,
       currentWork: work?.factionName ?? null,
       ratesReady: m.long.spanMs >= 120_000,
+      avgRunRate: recentRunRate(ns, data, cfg),
       bladeburner: {
         inDivision: bbInDivision || readJson<Partial<BladeburnerStatus>>(ns, DATA.bladeburner, {}).inDivision === true,
         simulacrum: data.installed.includes(SIMULACRUM),

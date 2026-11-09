@@ -144,6 +144,8 @@ export interface Plan {
   study: { university: string; city: string; course: string; skill: string; focus: boolean } | null;
   /** skill gates found, best value per second first (logged to judge them) */
   skillGates: SkillGate[];
+  /** install timing inputs: best pending value/s if we wait vs. recent runs' average (null = no history yet) */
+  installRates: { marginal: number; average: number | null };
   /** Gym training (combat stat) to reach the Bladeburner division's 100-in-each requirement. */
   train: { stat: string; gym: string; city: string; focus: boolean } | null;
   /** Why destroy is (not) happening: Red Pill installed, w0r1d_d43m0n seen/rooted, hack level vs req. */
@@ -183,6 +185,11 @@ export interface PlanInput {
    * installs wait for this (default true).
    */
   ratesReady?: boolean;
+  /**
+   * Average aug value per second of recent runs (lib/plan/runs.ts), or null without enough
+   * history: then the fixed installPatience rule decides instead.
+   */
+  avgRunRate?: number | null;
   /** Bladeburner manager state: in the division, and whether actions can run alongside work. */
   bladeburner?: { inDivision: boolean; simulacrum: boolean; canJoin?: boolean };
 }
@@ -580,23 +587,36 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
 
   // ---------- install decision ----------
   let install: Plan["install"] = null;
+  // value per second of waiting for the best pending aug (what staying in this run earns)
+  const marginal = Math.max(0, ...pending.filter((c) => c.value > BASE_VALUE).map((c) => c.value / Math.max(1, c.eta / 1000)));
   const newAugs = chosen.size + data.queued.length;
   const since = input.sinceInstall;
   const valuablePending = pending.filter((p) => p.value > BASE_VALUE);
   let reason = "";
   if (data.queued.includes(RED_PILL) || buyNow.length) reason = "The Red Pill";
   else if (newAugs > 0 && since >= cfg.minRunMs) {
+    // only factions that take donations (no gang faction, nothing without work: Bladeburners,
+    // Church of the Machine God…) — unlocking a donation that can't be made isn't a reason
     const favorUnlock = Object.keys(F).find(
       (f) =>
         F[f].joined &&
+        F[f].workTypes.length > 0 &&
+        f !== data.gangFaction &&
+        f !== BLADEBURNERS &&
         F[f].favor < data.favorToDonate &&
         F[f].favor + F[f].favorGain >= data.favorToDonate &&
         unownedValue(f) > 0,
     );
     if (since >= cfg.maxRunMs) reason = `run exceeded ${fmtS(cfg.maxRunMs / 1000)}`;
     else if (!valuablePending.length) reason = "nothing valuable left to wait for";
-    else if (input.ratesReady !== false && newAugs >= cfg.minAugsToInstall && nextEta > cfg.installPatience * since)
-      reason = `next aug in ${fmtS(nextEta / 1000)} > ${cfg.installPatience}× run time (${fmtS(since / 1000)})`;
+    else if (input.ratesReady !== false && newAugs >= cfg.minAugsToInstall) {
+      // marginal value theorem: install once waiting earns less than runs do on average
+      if (input.avgRunRate != null) {
+        if (marginal < input.avgRunRate)
+          reason = `waiting earns ${perHour(marginal)}/h < recent runs' ${perHour(input.avgRunRate)}/h`;
+      } else if (nextEta > cfg.installPatience * since)
+        reason = `next aug in ${fmtS(nextEta / 1000)} > ${cfg.installPatience}× run time (${fmtS(since / 1000)})`;
+    }
     else if (favorUnlock) reason = `installing unlocks donations at ${favorUnlock}`;
   }
   if (reason && cfg.autoInstall) {
@@ -626,6 +646,7 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     grindScore,
     hackXp,
     study,
+    installRates: { marginal, average: input.avgRunRate ?? null },
     skillGates: skillGates.slice(0, 8),
     train,
     worldDaemon: { redPill: data.installed.includes(RED_PILL), ...data.worldDaemon, hackLevel: data.hackLevel },
@@ -683,6 +704,8 @@ export function bestNfgFaction(data: FactionData, workableOnly = false, current?
   if (cur && rate(cur[1]) * NFG_SWITCH_MARGIN >= rate(bestInfo)) return cur[0];
   return best;
 }
+
+const perHour = (perSec: number) => (perSec * 3600).toFixed(2);
 
 function fmtS(s: number): string {
   if (!Number.isFinite(s)) return "∞";
