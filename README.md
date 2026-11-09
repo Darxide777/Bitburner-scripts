@@ -299,4 +299,4 @@ faction-working.
 - [x] Corporation: Agriculture, boost materials, research, investment rounds, dividends
 - [ ] Corporation: product division (Tobacco), exports, dividend rate from data
 - [ ] IPvGO cheats (SF14 `ns.go.cheat`) where the success chance is worth the risk
-- [ ] Endgame: Daedalus → The Red Pill → w0r1d_d43m0n, then auto-continue into the next BN12 level
+- [x] Endgame: Daedalus → The Red Pill → w0r1d_d43m0n, then auto-continue into the next BN12 level
