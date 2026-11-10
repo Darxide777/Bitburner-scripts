@@ -47,8 +47,8 @@ export async function callEach<R>(ns: NS, fn: string, argLists: unknown[][], tim
   ns.write(out, "", "w");
   // RAM on home comes and goes (batch bursts, other proxies): retry for ~1 s before giving up
   let pid = 0;
-  for (let attempt = 0; attempt < 6 && pid === 0; attempt++) {
-    if (attempt) await ns.sleep(200);
+  for (let tryNo = 0; tryNo < 6 && pid === 0; tryNo++) {
+    if (tryNo) await ns.sleep(200);
     pid = ns.exec(script, "home", { threads: 1, temporary: true }, out, input);
   }
   if (pid === 0) throw new CallError(`could not start ${fn} (not enough free RAM on home?)`);

@@ -302,7 +302,7 @@ export async function main(ns: NS): Promise<void> {
     const hackCfg: Partial<HackConfig> = {
       homeReserve: reserve,
       // lend spare RAM to factions while we are working for one
-      share: s?.work?.type === "FACTION" ? 1 : 0,
+      shareFrac: s?.work?.type === "FACTION" ? 1 : 0,
       // hacking level gating something valuable: farm hacking XP with part of the pool
       xpShare: current?.hackXp ? cfg.hackXpShare : 0,
       skipHosts: [...(stanekStatus?.reserveHosts ?? []), ...(readJson<{ hosts?: string[] }>(ns, DATA.userReserve, {}).hosts ?? [])],
@@ -315,8 +315,16 @@ export async function main(ns: NS): Promise<void> {
 
     // ---- factions & augmentations ----
     if (s && Date.now() - lastFactions > cfg.factionsEveryMs) {
-      lastFactions = Date.now();
-      current = (await factionsModule(ns, s, m, cfg, { ...DEFAULT_PLAN, ...cfg.plan }, event)) ?? current;
+      try {
+        current = (await factionsModule(ns, s, m, cfg, { ...DEFAULT_PLAN, ...cfg.plan }, event)) ?? current;
+        lastFactions = Date.now();
+      } catch (e) {
+        // CallError = no RAM for a proxy right now: try again next tick
+        if (!(e instanceof CallError)) {
+          lastFactions = Date.now();
+          event("error", `faction module failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
       const notes = current?.notes.join("; ") ?? "";
       if (notes && notes !== lastNotes) event("plan", notes);
       lastNotes = notes;
@@ -333,7 +341,7 @@ export async function main(ns: NS): Promise<void> {
 
     // ---- persistence ----
     if (s) {
-      const hackStatus = readJson<{ expectedPerSec?: number; poolTotal?: number }>(ns, DATA.hack, {});
+      const hackStatus = readJson<{ expectedPerSec?: number; poolTotal?: number }>(ns, DATA.hackStatus, {});
       writeJson(ns, DATA.status, { snapshot: s, metrics: m, hack: hackStatus, plan: current, stanek: stanekStatus, ram: ramReport(ns) });
       const ctx: DaemonContext = {
         t: Date.now(),
@@ -530,7 +538,7 @@ function casinoModule(ns: NS, s: Snapshot, m: Metrics, event: (k: string, msg: s
   if (s.money >= CASINO_CAP) return; // it could at most double what we already hold
   // don't trust an empty window: give the rate trackers a minute after (re)start
   if (m.short.spanMs < 60_000) return;
-  const hackRate = readJson<{ expectedPerSec?: number }>(ns, DATA.hack, {}).expectedPerSec ?? 0;
+  const hackRate = readJson<{ expectedPerSec?: number }>(ns, DATA.hackStatus, {}).expectedPerSec ?? 0;
   const gangRate = (s.gang?.moneyRate ?? 0) * 5; // moneyGainRate is per 200 ms gang cycle
   const income = Math.max(m.short.income, m.long.income, gangRate + hackRate);
   if (income * 1800 >= CASINO_CAP) return;
@@ -940,7 +948,7 @@ async function factionsModule(
   return p;
 }
 
-function metricsLine(s: Snapshot, m: Metrics, hack: { expectedPerSec?: number; poolTotal?: number }) {
+function metricsLine(s: Snapshot, m: Metrics, hackInfo: { expectedPerSec?: number; poolTotal?: number }) {
   const r = m.long.spanMs >= 120_000 ? m.long : m.short;
   return {
     t: s.t,
@@ -956,8 +964,8 @@ function metricsLine(s: Snapshot, m: Metrics, hack: { expectedPerSec?: number; p
     timeToGang: Number.isFinite(m.timeToGang) ? m.timeToGang : null,
     hackLevel: s.hackLevel,
     hackExpPerSec: r.hackExp,
-    hackExpected: hack.expectedPerSec ?? 0,
-    ramPool: hack.poolTotal ?? 0,
+    hackExpected: hackInfo.expectedPerSec ?? 0,
+    ramPool: hackInfo.poolTotal ?? 0,
     homeRam: s.homeRam,
     work: s.work?.type ?? null,
   };
@@ -1047,7 +1055,7 @@ function draw(
   ns: NS,
   s: Snapshot,
   m: Metrics,
-  hack: { expectedPerSec?: number; poolTotal?: number },
+  hackInfo: { expectedPerSec?: number; poolTotal?: number },
   plan: Plan | null,
   recent: string[],
 ) {
@@ -1061,7 +1069,7 @@ function draw(
     .slice(0, 5)
     .map(([k, v]) => `${k} ${money(v)}/s`);
   if (top.length) L.push(`  ${top.join("  ·  ")}`);
-  L.push(`hacking: pool ${ram(hack.poolTotal ?? 0)}  expected ${money(hack.expectedPerSec ?? 0)}/s   home ${ram(s.homeRam)} / ${s.homeCores}c`);
+  L.push(`hacking: pool ${ram(hackInfo.poolTotal ?? 0)}  expected ${money(hackInfo.expectedPerSec ?? 0)}/s   home ${ram(s.homeRam)} / ${s.homeCores}c`);
 
   L.push("");
   L.push(`rep/s total ${num(r.repTotal)}   work: ${describeWork(s)}`);

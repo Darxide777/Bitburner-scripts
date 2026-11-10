@@ -67,7 +67,7 @@ const TRACE = "data/infiltration-trace.txt";
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
   try {
-    await run(ns);
+    await play(ns);
   } catch (e) {
     // a proxy that couldn't start (home RAM full) or anything else: never leave a run going
     const s = findInfiltration(document);
@@ -80,7 +80,7 @@ export async function main(ns: NS): Promise<void> {
   }
 }
 
-async function run(ns: NS): Promise<void> {
+async function play(ns: NS): Promise<void> {
   const doc = document;
   const faction = String(ns.args[0] ?? "");
   const st = readJson<InfiltrationState>(ns, DATA.infiltration, { t: 0, measured: {}, runs: 0, failures: 0, lastRun: null, note: "" });

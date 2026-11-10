@@ -270,10 +270,10 @@ export const SOLVERS: Record<string, Solver> = {
 
   "Subarray with Maximum Sum": (a: number[]) => {
     let best = -Infinity;
-    let run = 0;
+    let cur = 0;
     for (const x of a) {
-      run = Math.max(x, run + x);
-      best = Math.max(best, run);
+      cur = Math.max(x, cur + x);
+      best = Math.max(best, cur);
     }
     return best;
   },

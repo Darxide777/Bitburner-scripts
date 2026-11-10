@@ -10,7 +10,7 @@
 // sharing one RAM pool. Leftover RAM can be lent to factions via share().
 //
 // Steered by data/config.txt (written by the daemon/planner):
-//   homeReserve (GB kept free on home), maxTargets, spacing (ms), share (0..1)
+//   homeReserve (GB kept free on home), maxTargets, spacing (ms), shareFrac (0..1)
 import type { NS, Player, Server } from "@ns";
 import { allHosts, isHacknet } from "../lib/net.js";
 import { readJson, writeJson } from "../lib/io.js";
@@ -21,13 +21,13 @@ export interface HackConfig {
   maxTargets: number;
   spacing: number;
   /** Fraction of leftover RAM to spend on share() (0 disables). */
-  share: number;
+  shareFrac: number;
   /** servers to leave alone entirely (e.g. the Stanek charger's) */
   skipHosts?: string[];
   /** share of the pool running weaken for hacking XP (0 = off), see xpFarm() */
   xpShare?: number;
 }
-export const DEFAULT_HACK_CONFIG: HackConfig = { homeReserve: 32, maxTargets: 6, spacing: 60, share: 0 };
+export const DEFAULT_HACK_CONFIG: HackConfig = { homeReserve: 32, maxTargets: 6, spacing: 60, shareFrac: 0 };
 
 interface Batch {
   h: number;
@@ -52,12 +52,12 @@ const MAX_BATCHES = 400;
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
-  const workers = [SCRIPTS.hack, SCRIPTS.grow, SCRIPTS.weaken, SCRIPTS.share];
+  const workers = [SCRIPTS.hackScript, SCRIPTS.growScript, SCRIPTS.weakenScript, SCRIPTS.shareScript];
   const ramOf = {
-    h: ns.getScriptRam(SCRIPTS.hack),
-    g: ns.getScriptRam(SCRIPTS.grow),
-    w: ns.getScriptRam(SCRIPTS.weaken),
-    s: ns.getScriptRam(SCRIPTS.share),
+    h: ns.getScriptRam(SCRIPTS.hackScript),
+    g: ns.getScriptRam(SCRIPTS.growScript),
+    w: ns.getScriptRam(SCRIPTS.weakenScript),
+    s: ns.getScriptRam(SCRIPTS.shareScript),
   };
   const states = new Map<string, TargetState>();
   const ready = new Set<string>(); // hosts that have the worker files
@@ -81,7 +81,7 @@ export async function main(ns: NS): Promise<void> {
       if (isHacknet(h) || !ns.hasRootAccess(h) || cfg.skipHosts?.includes(h)) continue;
       const max = ns.getServerMaxRam(h);
       if (max <= 0) continue;
-      if (!ready.has(h) || !ns.fileExists(SCRIPTS.weaken, h)) {
+      if (!ready.has(h) || !ns.fileExists(SCRIPTS.weakenScript, h)) {
         if (h !== "home") ns.scp(workers, h, "home");
         ready.add(h);
       }
@@ -119,11 +119,11 @@ export async function main(ns: NS): Promise<void> {
 
     // ---- share leftover RAM with factions ----
     shareThreads = 0;
-    if (cfg.share > 0) {
+    if (cfg.shareFrac > 0) {
       for (const [h, free] of pool) {
-        const t = Math.floor((free * cfg.share) / ramOf.s);
+        const t = Math.floor((free * cfg.shareFrac) / ramOf.s);
         if (t < 1) continue;
-        if (ns.exec(SCRIPTS.share, h, { threads: t, temporary: true }, 1, tag++)) shareThreads += t;
+        if (ns.exec(SCRIPTS.shareScript, h, { threads: t, temporary: true }, 1, tag++)) shareThreads += t;
       }
     }
 
@@ -140,7 +140,7 @@ export async function main(ns: NS): Promise<void> {
           ratePerSec: st.mode === "batch" && st.cycleMs > 0 ? (st.expected / st.cycleMs) * 1000 : 0,
           busyFor: Math.max(0, st.busyUntil - Date.now()),
         }));
-      writeJson(ns, DATA.hack, {
+      writeJson(ns, DATA.hackStatus, {
         t: Date.now(),
         formulas: hasFormulas(),
         poolTotal,
@@ -277,10 +277,10 @@ function batch(
     const land = firstLand + i * 4 * S;
     const id = nextTag();
     const jobs: [string, number, number, number][] = [
-      [SCRIPTS.hack, b.h, ramOf.h, land - H],
-      [SCRIPTS.weaken, b.w1, ramOf.w, land + S - W],
-      [SCRIPTS.grow, b.g, ramOf.g, land + 2 * S - G],
-      [SCRIPTS.weaken, b.w2, ramOf.w, land + 3 * S - W],
+      [SCRIPTS.hackScript, b.h, ramOf.h, land - H],
+      [SCRIPTS.weakenScript, b.w1, ramOf.w, land + S - W],
+      [SCRIPTS.growScript, b.g, ramOf.g, land + 2 * S - G],
+      [SCRIPTS.weakenScript, b.w2, ramOf.w, land + 3 * S - W],
     ];
     const pids: number[] = [];
     let ok = true;
@@ -354,10 +354,10 @@ function prep(
     st.mode = "wait";
     return;
   }
-  place(ns, pool, SCRIPTS.weaken, w1Fit, ramOf.w, [target, Math.max(0, land - W - Date.now()), id]);
+  place(ns, pool, SCRIPTS.weakenScript, w1Fit, ramOf.w, [target, Math.max(0, land - W - Date.now()), id]);
   if (g > 0) {
-    place(ns, pool, SCRIPTS.grow, g, ramOf.g, [target, Math.max(0, land + S - G - Date.now()), id]);
-    place(ns, pool, SCRIPTS.weaken, w2, ramOf.w, [target, Math.max(0, land + 2 * S - W - Date.now()), id]);
+    place(ns, pool, SCRIPTS.growScript, g, ramOf.g, [target, Math.max(0, land + S - G - Date.now()), id]);
+    place(ns, pool, SCRIPTS.weakenScript, w2, ramOf.w, [target, Math.max(0, land + 2 * S - W - Date.now()), id]);
   }
   st.mode = "prep";
   st.batches = 0;
@@ -411,7 +411,7 @@ function xpFarm(
   for (const [h, free] of [...pool.entries()].sort((a, b) => b[1] - a[1])) {
     const fit = Math.min(threads - placed, Math.floor(free / ramPer));
     if (fit < 1) continue;
-    if (ns.exec(SCRIPTS.weaken, h, { threads: fit, temporary: true }, best.host, 0, nextTag())) {
+    if (ns.exec(SCRIPTS.weakenScript, h, { threads: fit, temporary: true }, best.host, 0, nextTag())) {
       pool.set(h, free - fit * ramPer);
       placed += fit;
     }

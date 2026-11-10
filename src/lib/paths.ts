@@ -7,7 +7,7 @@ export const DATA = {
   metrics: "data/metrics.txt", // JSONL time series (one line per minute)
   events: "data/events.txt", // JSONL decision/event log
   runs: "data/runs.txt", // JSONL one line per augment install / node reset
-  hack: "data/hack.txt", // hacking manager status
+  hackStatus: "data/hack.txt", // hacking manager status
   gang: "data/gang.txt", // gang manager status
   gangConfig: "data/gang-config.txt", // gang tunables, written by the daemon
   casino: "data/casino.txt", // casino.js outcome for the current install
@@ -51,10 +51,10 @@ export const SCRIPTS = {
   corpManager: "corp/manager.js",
   infiltrate: "infiltrate.js",
   casinoTable: "casino/table.js", // the DOM-driving script (~36 GB)
-  hack: "hack/w/h.js",
-  grow: "hack/w/g.js",
-  weaken: "hack/w/w.js",
-  share: "hack/w/s.js",
+  hackScript: "hack/w/h.js",
+  growScript: "hack/w/g.js",
+  weakenScript: "hack/w/w.js",
+  shareScript: "hack/w/s.js",
 } as const;
 
 /** Hash of the current build, written by tools/sync.mjs; daemon.js restarts when it changes. */

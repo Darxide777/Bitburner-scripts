@@ -225,12 +225,12 @@ export async function manageStanek(
   const needPeak = lowest < eff(peakBlock) * 0.5 || stats.some((f) => f.numCharge < 1);
   // continuous: a whole server within the share, else a share-sized slice of home (early in a
   // node home is most of the RAM, and Church rep only grows while something charges)
-  const share = (churchRep ? cfg.churchPoolShare : cfg.maxPoolShare) * pool;
+  const poolShare = (churchRep ? cfg.churchPoolShare : cfg.maxPoolShare) * pool;
   const homeBlock = blocks.find((b) => b.host === "home");
-  const cloudCont = blocks.find((b) => b.host !== "home" && b.gb <= share) ?? null;
+  const cloudCont = blocks.find((b) => b.host !== "home" && b.gb <= poolShare) ?? null;
   const homeSlice =
-    homeBlock && Math.floor(Math.min(homeBlock.gb, share) / ramPer) >= 1
-      ? { ...homeBlock, gb: Math.min(homeBlock.gb, share), threads: Math.floor(Math.min(homeBlock.gb, share) / ramPer) }
+    homeBlock && Math.floor(Math.min(homeBlock.gb, poolShare) / ramPer) >= 1
+      ? { ...homeBlock, gb: Math.min(homeBlock.gb, poolShare), threads: Math.floor(Math.min(homeBlock.gb, poolShare) / ramPer) }
       : null;
   const contBlock = !cloudCont ? homeSlice : !homeSlice || cloudCont.threads >= homeSlice.threads ? cloudCont : homeSlice;
   const want = needPeak

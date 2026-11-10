@@ -92,8 +92,8 @@ export async function main(ns: NS): Promise<void> {
       .map((l) => (JSON.parse(l) as { durationMs?: number }).durationMs ?? 0);
     const remainingSec = Math.max(cfg.minRemainingSec, expectedRunMs(runs, 30 * 60_000) / 1000 - since);
     status.remainingSec = remainingSec;
-    const hack = readJson<{ targets?: { host: string; ratePerSec: number }[] }>(ns, DATA.hack, {});
-    const targets = (hack.targets ?? []).map((t) => ({
+    const hackStatus = readJson<{ targets?: { host: string; ratePerSec: number }[] }>(ns, DATA.hackStatus, {});
+    const targets = (hackStatus.targets ?? []).map((t) => ({
       host: t.host,
       ratePerSec: t.ratePerSec,
       minSecurity: ns.getServerMinSecurityLevel(t.host),

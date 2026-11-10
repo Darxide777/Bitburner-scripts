@@ -10,7 +10,7 @@ import type { NS } from "@ns";
 import { SCRIPTS } from "./lib/paths.js";
 import { appendLine } from "./lib/io.js";
 
-const WORKERS: string[] = [SCRIPTS.hack, SCRIPTS.grow, SCRIPTS.weaken, SCRIPTS.share];
+const WORKERS: string[] = [SCRIPTS.hackScript, SCRIPTS.growScript, SCRIPTS.weakenScript, SCRIPTS.shareScript];
 
 /** Breadcrumbs pulled out of the game by the sync tool (logs/casino-trace.txt). */
 const TRACE = "data/casino-trace.txt";
