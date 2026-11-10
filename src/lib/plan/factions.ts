@@ -15,6 +15,10 @@ import type { FactionData, FactionInfo } from "./data.js";
 import { NFG, RED_PILL, SKIP_FACTIONS } from "./data.js";
 
 const BLADEBURNERS = "Bladeburners";
+/** Daedalus invite: 30 augs, $100b, and hacking 2500 (or combat 1500). */
+export const DAEDALUS_AUGS = 30;
+export const DAEDALUS_MONEY = 100e9;
+export const DAEDALUS_HACK = 2500;
 /** every combat stat must reach this to join the Bladeburner division */
 const BB_JOIN_STAT = 100;
 const GYM_STAT = { strength: "str", defense: "def", dexterity: "dex", agility: "agi" } as const;
@@ -28,6 +32,10 @@ export interface PlanConfig {
   /** Minimum new augs (bought + queued) before an ETA-based install. */
   minAugsToInstall: number;
   autoInstall: boolean;
+  /** BN12: once Daedalus' 30-aug requirement is met, hold installs until The Red Pill. */
+  pushRedPill: boolean;
+  /** Safety cap on pushRedPill: after this long without The Red Pill, allow normal installs again. */
+  pushRedPillMaxMs: number;
   autoDestroy: boolean;
   nextNode: number;
   /** Let the planner choose what the player works on. */
@@ -55,6 +63,8 @@ export const DEFAULT_PLAN: PlanConfig = {
   maxRunMs: 6 * 3600_000,
   minAugsToInstall: 4,
   autoInstall: true,
+  pushRedPill: true,
+  pushRedPillMaxMs: 48 * 3600_000,
   autoDestroy: true,
   nextNode: 12,
   manageWork: true,
@@ -493,14 +503,33 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     skillGates.sort((a, b) => b.score - a.score);
   }
   const hackGates = skillGates.filter((g) => g.needs.hacking);
-  const hackXp: Plan["hackXp"] = hackGates.length
+  let hackXp: Plan["hackXp"] = hackGates.length
     ? { level: Math.max(...hackGates.map((g) => g.needs.hacking)), why: hackGates[0].target }
     : null;
+  // Daedalus' 2500 hacking gate is the long pole in a BN12 Red Pill run. The generic
+  // skill-gate scan only adds it once money/augs are met, but money arrives in minutes
+  // while the hacking level does not: start farming XP as soon as the 30-aug gate is met.
+  const daedalusXp =
+    cfg.skillWork &&
+    data.node === 12 &&
+    !data.installed.includes(RED_PILL) &&
+    !!F.Daedalus &&
+    !F.Daedalus.joined &&
+    data.installed.length >= DAEDALUS_AUGS &&
+    data.hackLevel < DAEDALUS_HACK
+      ? { level: DAEDALUS_HACK, why: "Daedalus" }
+      : null;
+  if (daedalusXp && (!hackXp || daedalusXp.level > hackXp.level)) hackXp = daedalusXp;
   let study: Plan["study"] = null;
+  // Hacking XP comes from the hacking manager, not from a class: a high-level
+  // Algorithms course takes years, and the player's time is better spent on rep.
+  const studyGap = (g: SkillGate) =>
+    Number.isFinite(g.studySec) &&
+    Object.keys(g.needs).some((sk) => sk !== "hacking" && studyable.includes(sk) && (data.skills[sk] ?? 0) < g.needs[sk]);
   const takeStudy = (why: string) => {
-    const g = skillGates.find((x) => Number.isFinite(x.studySec))!;
+    const g = skillGates.find(studyGap)!;
     // one skill at a time, in the gate's (fixed) order: picking the lowest would hop
-    const skill = Object.keys(g.needs).find((sk) => (data.skills[sk] ?? 0) < g.needs[sk])!;
+    const skill = Object.keys(g.needs).find((sk) => sk !== "hacking" && (data.skills[sk] ?? 0) < g.needs[sk])!;
     const opt = data.study![skill];
     const focus = cfg.focus && !data.hasNeuroreceptor;
     if (opt.kind === "gym") {
@@ -511,7 +540,7 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
       notes.push(`${why}: studying ${opt.course} for ${skill} ${g.needs[skill]} (${fmtS(g.studySec)}) → ${g.target}`);
     }
   };
-  const bestStudy = skillGates.find((x) => Number.isFinite(x.studySec)) ?? null;
+  const bestStudy = skillGates.find(studyGap) ?? null;
   let company: Plan["company"] = null;
   let grindScore = 0;
   const takeCompany = (why: string) => {
@@ -606,6 +635,18 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
 
   // ---------- install decision ----------
   let install: Plan["install"] = null;
+  // A Red Pill run is worth more than any aug install: once Daedalus' 30-aug requirement
+  // is met, keep the run alive until The Red Pill (or maxRunMs, if pushRedPill is off).
+  // The push has a safety cap: if XP stalls, do not hold the run forever.
+  const redPillEligible =
+    cfg.pushRedPill &&
+    data.node === 12 &&
+    !data.installed.includes(RED_PILL) &&
+    !!F.Daedalus &&
+    data.installed.length >= DAEDALUS_AUGS;
+  const redPillPush = redPillEligible && input.sinceInstall < cfg.pushRedPillMaxMs;
+  if (redPillPush) notes.push("Red Pill push: holding installs until The Red Pill");
+  else if (redPillEligible) notes.push(`Red Pill push cap (${fmtS(cfg.pushRedPillMaxMs / 1000)}) reached: allowing installs`);
   // value per second of waiting for the best pending aug (what staying in this run earns)
   const marginal = Math.max(0, ...pending.filter((c) => c.value > BASE_VALUE).map((c) => c.value / Math.max(1, c.eta / 1000)));
   const newAugs = chosen.size + data.queued.length;
@@ -637,6 +678,10 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
         reason = `next aug in ${fmtS(nextEta / 1000)} > ${cfg.installPatience}× run time (${fmtS(since / 1000)})`;
     }
     else if (favorUnlock) reason = `installing unlocks donations at ${favorUnlock}`;
+  }
+  if (redPillPush && reason && reason !== "The Red Pill") {
+    notes.push(`holding install (${reason}) until The Red Pill`);
+    reason = "";
   }
   if (reason && cfg.autoInstall) {
     install = {

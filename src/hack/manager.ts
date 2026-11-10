@@ -92,6 +92,7 @@ export async function main(ns: NS): Promise<void> {
 
     // ---- RAM pool ----
     const pool: Pool = new Map();
+    let managedRam = 0;
     for (const h of hosts) {
       if (isHacknet(h) || skipHosts.has(h)) continue;
       try {
@@ -102,6 +103,7 @@ export async function main(ns: NS): Promise<void> {
           if (h !== "home") ns.scp(workers, h, "home");
           ready.add(h);
         }
+        managedRam += Math.max(0, max - (h === "home" ? cfg.homeReserve : 0));
         const free = max - ns.getServerUsedRam(h) - (h === "home" ? cfg.homeReserve : 0);
         if (free >= 1.6) pool.set(h, free);
       } catch {
@@ -109,6 +111,9 @@ export async function main(ns: NS): Promise<void> {
       }
     }
     const poolTotal = sum(pool);
+    // Reserve a share of total managed RAM for XP, not just a share of whatever happens
+    // to be free after the money batches: otherwise long-lived batches starve the farm.
+    const xpBudget = (cfg.xpShare ?? 0) > 0 ? managedRam * (cfg.xpShare ?? 0) : 0;
 
     // ---- target ranking (every 30s) ----
     if (now - lastRank > 30_000 || ranked.length === 0) {
@@ -117,30 +122,43 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // ---- hacking XP (a hacking level gates something): weaken the best XP-per-second server ----
-    if ((cfg.xpShare ?? 0) > 0 && hasFormulas() && Date.now() >= xp.busyUntil) {
-      const budget = sum(pool) * (cfg.xpShare ?? 0);
-      xpFarm(ns, hosts, skipHosts, ranked.slice(0, cfg.maxTargets), player, pool, budget, ramOf.w, xp, () => tag++);
+    if (xpBudget > 0 && hasFormulas() && Date.now() >= xp.busyUntil) {
+      xpFarm(ns, hosts, skipHosts, player, pool, xpBudget, ramOf.w, xp, () => tag++);
     }
+    const xpCommitted = Date.now() < xp.busyUntil ? xp.threads * ramOf.w : 0;
+    const xpReserve = Math.max(0, xpBudget - xpCommitted);
 
     // ---- schedule targets, best first ----
+    // Leave the unspent XP reserve out of the money pool, so new batches can only use
+    // RAM above it. Existing batches keep running; as they finish, XP can claim its share.
+    const workPool: Pool = new Map(pool);
+    let reserve = xpReserve;
+    for (const [h, free] of workPool) {
+      if (reserve <= 0) break;
+      const take = Math.min(free, reserve);
+      workPool.set(h, free - take);
+      reserve -= take;
+    }
     if (hasFormulas()) {
       for (const target of ranked.slice(0, cfg.maxTargets)) {
         const st = states.get(target) ?? { busyUntil: 0, mode: "wait", batches: 0, frac: 0, expected: 0, cycleMs: 0 };
         states.set(target, st);
         if (Date.now() < st.busyUntil) continue;
-        if (sum(pool) < 8) break;
+        // don't batch the server the XP round is weakening right now
+        if (xp.target === target && Date.now() < xp.busyUntil) continue;
+        if (sum(workPool) < 8) break;
         const s = ns.getServer(target);
         const prepped =
           (s.hackDifficulty ?? 0) <= (s.minDifficulty ?? 0) + 0.01 && (s.moneyAvailable ?? 0) >= (s.moneyMax ?? 0) * 0.999;
-        if (prepped) batch(ns, target, s, player, pool, cfg, ramOf, st, () => tag++);
-        else prep(ns, target, s, player, pool, cfg, ramOf, st, () => tag++);
+        if (prepped) batch(ns, target, s, player, workPool, cfg, ramOf, st, () => tag++);
+        else prep(ns, target, s, player, workPool, cfg, ramOf, st, () => tag++);
       }
     }
 
     // ---- share leftover RAM with factions ----
     shareThreads = 0;
     if (cfg.shareFrac > 0) {
-      for (const [h, free] of pool) {
+      for (const [h, free] of workPool) {
         const t = Math.floor((free * cfg.shareFrac) / ramOf.s);
         if (t < 1) continue;
         if (ns.exec(SCRIPTS.shareScript, h, { threads: t, temporary: true }, 1, tag++)) shareThreads += t;
@@ -439,14 +457,13 @@ interface XpState {
 /**
  * Hacking XP: weaken gives the same XP per thread as a successful hack and never touches
  * money, so a block of weaken threads on the server with the most XP per second of weaken
- * time (formulas: hackExp at min security / weakenTime) farms XP. Batch targets are skipped
- * (extra weakens would only disturb their timing); one round at a time.
+ * time (formulas: hackExp at min security / weakenTime) farms XP. Batch targets are fair
+ * game when they are the best XP source; the scheduler skips one while its round runs.
  */
 function xpFarm(
   ns: NS,
   hosts: string[],
   skip: ReadonlySet<string>,
-  batchTargets: string[],
   player: Player,
   pool: Pool,
   budgetGB: number,
@@ -457,7 +474,7 @@ function xpFarm(
   const F = ns.formulas.hacking;
   let best: { host: string; rate: number; time: number } | null = null;
   for (const h of hosts) {
-    if (h === "home" || isHacknet(h) || skip.has(h) || batchTargets.includes(h)) continue;
+    if (h === "home" || isHacknet(h) || skip.has(h)) continue;
     try {
       if (!ns.hasRootAccess(h)) continue;
       const s = ns.getServer(h);

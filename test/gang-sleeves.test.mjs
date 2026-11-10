@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { decideGang, ascendThreshold, DEFAULT_GANG } from "../dist/lib/plan/gang.js";
-import { decideSleeves, recoveryPicks, DEFAULT_RECOVERY } from "../dist/lib/plan/sleeves.js";
+import { decideSleeves, recoveryPicks, shouldFarmKarma, DEFAULT_RECOVERY } from "../dist/lib/plan/sleeves.js";
 
 // ---------- gang ----------
 const member = (name, stat, o = {}) => ({
@@ -115,6 +115,15 @@ test("recovery rotation: most-shocked sleeve, kept until another is `margin` wor
   // done recovering (below minShock) → nobody
   assert.deepEqual(recoveryPicks([sleeve(0, { shock: 0.5, current: { kind: "recovery" } })], rec), []);
   assert.deepEqual(recoveryPicks(fresh, { ...rec, slots: 2 }).sort(), [0, 1]);
+});
+
+test("karma farming only when the gang is reachable within the run", () => {
+  const base = { hasGang: false, karma: -19_000, karmaTarget: -54_000, timeToGangMs: 60 * 60_000, runLeftMs: 2 * 60 * 60_000 };
+  assert.equal(shouldFarmKarma(base), true);
+  assert.equal(shouldFarmKarma({ ...base, timeToGangMs: 318 * 24 * 60 * 60_000 }), false, "318 days is not this run");
+  assert.equal(shouldFarmKarma({ ...base, runLeftMs: 30 * 60_000 }), false, "1 h > 30 min left");
+  assert.equal(shouldFarmKarma({ ...base, hasGang: true }), false);
+  assert.equal(shouldFarmKarma({ ...base, karma: -54_000 }), false);
 });
 
 test("karma phase: one sleeve recovers, the rest farm karma; mode off disables it", () => {

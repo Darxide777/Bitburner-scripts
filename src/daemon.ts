@@ -18,7 +18,7 @@ import { BUILD_MARKER, DATA, GANG_KARMA, SCRIPTS } from "./lib/paths.js";
 import { call, callEach, CallError } from "./lib/call.js";
 import { collectFactionData } from "./lib/plan/collect.js";
 import { NFG, type FactionData } from "./lib/plan/data.js";
-import { augValue, DEFAULT_PLAN, plan as makePlan, routeWeights, type Plan, type PlanConfig } from "./lib/plan/factions.js";
+import { augValue, DAEDALUS_MONEY, DEFAULT_PLAN, plan as makePlan, routeWeights, type Plan, type PlanConfig } from "./lib/plan/factions.js";
 import type { GangConfig } from "./lib/plan/gang.js";
 import type { GoConfig } from "./lib/plan/go.js";
 import { manageSleeves } from "./lib/sleeves.js";
@@ -29,7 +29,7 @@ import type { HackConfig } from "./hack/manager.js";
 import { act as doActions, type ActArgs } from "./lib/act.js";
 import type { BladeburnerControl, BladeburnerStatus } from "./bladeburner/manager.js";
 import type { BbConfig } from "./lib/plan/bladeburner.js";
-import { DEFAULT_RECOVERY, type RecoveryConfig } from "./lib/plan/sleeves.js";
+import { DEFAULT_RECOVERY, shouldFarmKarma, type RecoveryConfig } from "./lib/plan/sleeves.js";
 import { DEFAULT_STOCKS, type StockConfig } from "./lib/plan/stocks.js";
 import type { StocksControl, StocksStatus } from "./stocks/manager.js";
 import type { HacknetControl, HacknetStatus } from "./hacknet/manager.js";
@@ -71,6 +71,8 @@ interface DaemonConfig {
   userModules: UserModule[];
   /** Share of the hacking pool farming XP while a hacking level gates something (plan.hackXp). */
   hackXpShare: number;
+  /** Once money no longer gates Daedalus, use this share instead (money is not the bottleneck). */
+  hackXpShareMax: number;
   /** Log graftable augs (value vs. entropy and time) every 10 min; no grafting yet. */
   logGrafting: boolean;
   /** Infiltration autoplayer (infiltrate.js) when it beats faction work for the grind faction. */
@@ -110,6 +112,7 @@ const DEFAULTS: DaemonConfig = {
   contractsEveryMs: 5 * 60_000,
   userModules: [],
   hackXpShare: 0.5,
+  hackXpShareMax: 0.9,
   logGrafting: true,
   manageInfiltration: true,
   infiltration: {},
@@ -306,8 +309,19 @@ export async function main(ns: NS): Promise<void> {
       homeReserve: reserve,
       // lend spare RAM to factions while we are working for one
       shareFrac: s?.work?.type === "FACTION" ? 1 : 0,
-      // hacking level gating something valuable: farm hacking XP with part of the pool
-      xpShare: current?.hackXp ? cfg.hackXpShare : 0,
+      // hacking level gating something valuable: farm hacking XP with part of the pool.
+      // For Daedalus, money stops being the bottleneck at $100b, so give XP the larger share.
+      xpShare: current?.hackXp
+        ? Math.min(
+            1,
+            Math.max(
+              0,
+              current.hackXp.why === "Daedalus" && (s?.money ?? 0) < DAEDALUS_MONEY
+                ? cfg.hackXpShare
+                : cfg.hackXpShareMax,
+            ),
+          )
+        : 0,
       skipHosts: [...(stanekStatus?.reserveHosts ?? []), ...(readJson<{ hosts?: string[] }>(ns, DATA.userReserve, {}).hosts ?? [])],
     };
     writeJson(ns, DATA.hackConfig, hackCfg);
@@ -903,7 +917,19 @@ async function factionsModule(
   if (dcfg.manageSleeves && s.sleeves > 0) {
     try {
       const targets = p.grindFactions;
-      const needKarma = !data.gangFaction && data.karma > GANG_KARMA;
+      const runDurations = ns
+        .read(DATA.runs)
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => (JSON.parse(l) as { durationMs?: number }).durationMs ?? 0);
+      const runLeft = expectedRunMs(runDurations, 30 * 60_000) - m.sinceInstall;
+      const needKarma = shouldFarmKarma({
+        hasGang: !!data.gangFaction,
+        karma: data.karma,
+        karmaTarget: GANG_KARMA,
+        timeToGangMs: m.timeToGang,
+        runLeftMs: runLeft,
+      });
       const rep = await manageSleeves(
         ns,
         data,

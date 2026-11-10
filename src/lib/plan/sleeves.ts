@@ -1,7 +1,8 @@
 // Sleeve assignment. Pure logic → 0 GB.
 //
-//   no gang yet (and karma not there): every sleeve commits Homicide (the fastest
-//     karma), or Mug while Homicide would mostly fail → shortest time to gang
+//   no gang yet, karma not there, and the gang is reachable within the run: every
+//     sleeve commits Homicide (the fastest karma), or Mug while Homicide would mostly
+//     fail → shortest time to gang. An unreachable gang is ignored: sleeves earn rep.
 //   otherwise: one sleeve per faction we still need rep at (best sleeve for each, in
 //     the planner's priority order), never the faction the player is working for
 //     (the game doesn't allow two workers on one faction)
@@ -87,6 +88,23 @@ export function karmaCrime(s: SleeveInfo): string {
  */
 export function moneyCrime(s: SleeveInfo): string {
   return s.heistChance >= 0.3 ? "Heist" : karmaCrime(s);
+}
+
+/**
+ * Should sleeves farm karma toward a gang? Only when there is no gang yet, karma is
+ * missing, and the gang is actually reachable before the run is expected to end.
+ * Otherwise Homicide is wasted time: sleeves should earn rep/favor instead.
+ */
+export function shouldFarmKarma(opts: {
+  hasGang: boolean;
+  karma: number;
+  karmaTarget: number;
+  timeToGangMs: number;
+  runLeftMs: number;
+}): boolean {
+  if (opts.hasGang || opts.karma <= opts.karmaTarget) return false;
+  if (!Number.isFinite(opts.timeToGangMs)) return false;
+  return opts.timeToGangMs <= Math.max(30 * 60_000, opts.runLeftMs);
 }
 
 export function decideSleeves(input: SleeveInput): Assignment[] {

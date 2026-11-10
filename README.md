@@ -98,8 +98,10 @@ collects faction/aug state and the planner decides:
   NeuroFlux, then falls back to crime (karma toward a gang).
 - *travel / backdoor*: when a wanted faction is missing only a city or a backdoor, go get it.
 - *skill gates* (hacking, charisma, combat): a skill level that blocks something valuable — a faction
-  invite, the easiest company job in a useful field, or w0r1d_d43m0n's hack level. Hacking: the
-  hacking manager puts `hackXpShare` (50%) of the pool on weaken for XP (weaken gives a hack's XP
+  invite, the easiest company job in a useful field, or w0r1d_d43m0n's hack level. In BN12 the
+  Daedalus hacking-2500 gate starts XP as soon as the 30-aug requirement is met, even before
+  $100b. Hacking: the manager puts `hackXpShare` (50%) of the pool on weaken for XP, rising to
+  `hackXpShareMax` (90%) once money no longer gates Daedalus (weaken gives a hack's XP
   per thread and never touches money) on the server with the most XP per second, until the gate
   clears. Study (player time): XP still needed for the level — the game's skill formula inverted
   with the multiplier calibrated from current level and XP — ÷ the best course's XP/s
@@ -124,8 +126,10 @@ collects faction/aug state and the planner decides:
   install event in `data/events.txt` bought), with at least `minAugsToInstall` new augs. Until 3
   runs can be valued, the old rule: next aug further away than `installPatience` × the run so far.
   Also when the run exceeds `maxRunMs`, or when installing would unlock donations at a faction
-  that takes them. `plan.installRates` shows both rates. Leftover
-  money goes to home RAM, then NeuroFlux levels.
+  that takes them. In BN12, once Daedalus' 30-aug requirement is met, `pushRedPill` (default on)
+  suppresses installs until The Red Pill; set it false to keep the normal cadence. The push is
+  capped by `pushRedPillMaxMs` (48h) so a stalled XP farm cannot hold the run forever.
+  `plan.installRates` shows both rates. Leftover money goes to home RAM, then NeuroFlux levels.
 - *infra spend*: the economy module's budget tapers from 50% to 5% as install approaches,
   because cloud servers are wiped on install.
 - *destroy*: with The Red Pill installed and the hack level reached, destroy w0r1d_d43m0n

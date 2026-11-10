@@ -1,7 +1,7 @@
 // Planner unit tests (run against the compiled output: `npm test`).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { plan, escalatedCost, purchaseOrder, augValue, bestNfgFaction, expToLevel, routeWeights, DEFAULT_PLAN } from "../dist/lib/plan/factions.js";
+import { plan, escalatedCost, purchaseOrder, augValue, bestNfgFaction, expToLevel, routeWeights, DEFAULT_PLAN, DAEDALUS_AUGS, DAEDALUS_HACK } from "../dist/lib/plan/factions.js";
 
 const fac = (o = {}) => ({
   joined: false, invited: false, rep: 0, favor: 0, favorGain: 0, enemies: [], workTypes: [],
@@ -416,6 +416,33 @@ test("install timing: marginal value of waiting vs. recent runs' average rate", 
   assert.ok(p1.install && p1.install.reason.startsWith("waiting earns"), p1.install?.reason);
   // no history: the old patience rule (next aug 100 s away vs 0.5 × 1 h → no install)
   assert.equal(plan(input(installWorld(), { ...since, avgRunRate: null })).install, null);
+});
+
+function redPillWorld(over = {}) {
+  const w = installWorld();
+  while (w.installed.length < DAEDALUS_AUGS) w.installed.push(`Old${w.installed.length}`);
+  w.factions.Daedalus = fac();
+  return Object.assign(w, over);
+}
+
+test("BN12 Red Pill push: hold installs, start Daedalus XP before the money gate", () => {
+  const since = { sinceInstall: 3600_000, avgRunRate: 1e3 };
+  const w = redPillWorld({ money: 1e6, hackLevel: 1000 });
+  w.study = { hacking: { university: "ZB Institute of Technology", city: "Volhaven", course: "Algorithms", expPerSec: 50 } };
+  const p = plan(input(w, since));
+  assert.equal(p.install, null, "holding the run for The Red Pill");
+  assert.deepEqual(p.hackXp, { level: DAEDALUS_HACK, why: "Daedalus" });
+  assert.equal(p.study, null, "hacking XP comes from scripts, not a 28-year class");
+  assert.ok(p.notes.some((n) => n.includes("holding install")), p.notes.join("; "));
+  const off = plan(input(w, since), { ...DEFAULT_PLAN, pushRedPill: false });
+  assert.ok(off.install, "opt-out keeps normal install timing");
+  const capped = plan(input(w, { sinceInstall: DEFAULT_PLAN.pushRedPillMaxMs + 1, avgRunRate: 1e3 }));
+  assert.ok(capped.install, "the safety cap allows an install when the push stalls");
+  assert.ok(capped.notes.some((n) => n.includes("cap")), capped.notes.join("; "));
+  assert.equal(plan(input(redPillWorld({ money: 1e6, hackLevel: DAEDALUS_HACK }), since)).hackXp, null);
+  const done = redPillWorld({ money: 1e15, hackLevel: DAEDALUS_HACK });
+  done.installed.push("The Red Pill");
+  assert.ok(plan(input(done, since)).install, "The Red Pill ends the push");
 });
 
 test("no 'unlocks donations' install for factions that take no donations", () => {
