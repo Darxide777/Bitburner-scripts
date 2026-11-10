@@ -13,16 +13,15 @@ export const isHacknet = (host: string): boolean => host.startsWith("hacknet-");
 export function allHosts(ns: NS): string[] {
   const seen = new Set<string>(["home"]);
   const queue = ["home"];
-  while (queue.length) {
-    const h = queue.shift()!;
-    for (const n of ns.scan(h)) {
+  for (let i = 0; i < queue.length; i++) {
+    for (const n of ns.scan(queue[i])) {
       if (!seen.has(n)) {
         seen.add(n);
         queue.push(n);
       }
     }
   }
-  return [...seen];
+  return queue;
 }
 
 /** Path of hostnames from home to `target` (exclusive of home), or null. */
@@ -30,8 +29,8 @@ export function pathTo(ns: NS, target: string): string[] | null {
   const parent = new Map<string, string>();
   const queue = ["home"];
   const seen = new Set(queue);
-  while (queue.length) {
-    const h = queue.shift()!;
+  for (let i = 0; i < queue.length; i++) {
+    const h = queue[i];
     if (h === target) break;
     for (const n of ns.scan(h)) {
       if (!seen.has(n)) {

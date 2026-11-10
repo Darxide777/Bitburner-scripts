@@ -49,6 +49,8 @@ type Pool = Map<string, number>; // host -> free GB
 
 const FRACTIONS = [0.9, 0.75, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05, 0.02, 0.01];
 const MAX_BATCHES = 400;
+const CONFIG_RELOAD_MS = 1_000;
+const HOST_REFRESH_MS = 10_000;
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL");
@@ -61,6 +63,11 @@ export async function main(ns: NS): Promise<void> {
   };
   const states = new Map<string, TargetState>();
   const ready = new Set<string>(); // hosts that have the worker files
+  let cfg: HackConfig = DEFAULT_HACK_CONFIG;
+  let skipHosts = new Set<string>();
+  let hosts: string[] = [];
+  let lastConfig = 0;
+  let lastHosts = 0;
   let ranked: string[] = [];
   let lastRank = 0;
   let lastStatus = 0;
@@ -71,35 +78,48 @@ export async function main(ns: NS): Promise<void> {
   const hasFormulas = () => ns.fileExists("Formulas.exe", "home");
 
   while (true) {
-    const cfg = { ...DEFAULT_HACK_CONFIG, ...readJson<Partial<HackConfig>>(ns, DATA.hackConfig, {}) };
-    const hosts = allHosts(ns);
+    const now = Date.now();
+    if (now - lastConfig >= CONFIG_RELOAD_MS) {
+      cfg = { ...DEFAULT_HACK_CONFIG, ...readJson<Partial<HackConfig>>(ns, DATA.hackConfig, {}) };
+      skipHosts = new Set(cfg.skipHosts ?? []);
+      lastConfig = now;
+    }
+    if (now - lastHosts >= HOST_REFRESH_MS || hosts.length === 0) {
+      hosts = allHosts(ns);
+      lastHosts = now;
+    }
     const player = ns.getPlayer();
 
     // ---- RAM pool ----
     const pool: Pool = new Map();
     for (const h of hosts) {
-      if (isHacknet(h) || !ns.hasRootAccess(h) || cfg.skipHosts?.includes(h)) continue;
-      const max = ns.getServerMaxRam(h);
-      if (max <= 0) continue;
-      if (!ready.has(h) || !ns.fileExists(SCRIPTS.weakenScript, h)) {
-        if (h !== "home") ns.scp(workers, h, "home");
-        ready.add(h);
+      if (isHacknet(h) || skipHosts.has(h)) continue;
+      try {
+        if (!ns.hasRootAccess(h)) continue;
+        const max = ns.getServerMaxRam(h);
+        if (max <= 0) continue;
+        if (!ready.has(h) || !ns.fileExists(SCRIPTS.weakenScript, h)) {
+          if (h !== "home") ns.scp(workers, h, "home");
+          ready.add(h);
+        }
+        const free = max - ns.getServerUsedRam(h) - (h === "home" ? cfg.homeReserve : 0);
+        if (free >= 1.6) pool.set(h, free);
+      } catch {
+        ready.delete(h);
       }
-      const free = max - ns.getServerUsedRam(h) - (h === "home" ? cfg.homeReserve : 0);
-      if (free >= 1.6) pool.set(h, free);
     }
     const poolTotal = sum(pool);
 
     // ---- target ranking (every 30s) ----
-    if (Date.now() - lastRank > 30_000 || ranked.length === 0) {
-      ranked = rankTargets(ns, hosts, player, ramOf, hasFormulas());
-      lastRank = Date.now();
+    if (now - lastRank > 30_000 || ranked.length === 0) {
+      ranked = rankTargets(ns, hosts, player, ramOf, hasFormulas(), skipHosts);
+      lastRank = now;
     }
 
     // ---- hacking XP (a hacking level gates something): weaken the best XP-per-second server ----
     if ((cfg.xpShare ?? 0) > 0 && hasFormulas() && Date.now() >= xp.busyUntil) {
       const budget = sum(pool) * (cfg.xpShare ?? 0);
-      xpFarm(ns, hosts, ranked.slice(0, cfg.maxTargets), player, pool, budget, ramOf.w, xp, () => tag++);
+      xpFarm(ns, hosts, skipHosts, ranked.slice(0, cfg.maxTargets), player, pool, budget, ramOf.w, xp, () => tag++);
     }
 
     // ---- schedule targets, best first ----
@@ -188,22 +208,34 @@ function calcBatch(ns: NS, s: Server, p: Player, f: number, ramOf: Record<string
 }
 
 /** Rank hackable servers by expected $ per GB-second of RAM at a moderate hack fraction. */
-function rankTargets(ns: NS, hosts: string[], p: Player, ramOf: Record<string, number>, formulas: boolean): string[] {
+function rankTargets(
+  ns: NS,
+  hosts: string[],
+  p: Player,
+  ramOf: Record<string, number>,
+  formulas: boolean,
+  skip: ReadonlySet<string>,
+): string[] {
   const scored: [string, number][] = [];
   for (const h of hosts) {
-    if (h === "home" || isHacknet(h) || !ns.hasRootAccess(h)) continue;
-    if (ns.getServerMaxMoney(h) <= 0 || ns.getServerRequiredHackingLevel(h) > p.skills.hacking) continue;
-    if (!formulas) {
-      scored.push([h, ns.getServerMaxMoney(h) / ns.getServerRequiredHackingLevel(h)]);
+    if (h === "home" || isHacknet(h) || skip.has(h)) continue;
+    try {
+      if (!ns.hasRootAccess(h)) continue;
+      if (ns.getServerMaxMoney(h) <= 0 || ns.getServerRequiredHackingLevel(h) > p.skills.hacking) continue;
+      if (!formulas) {
+        scored.push([h, ns.getServerMaxMoney(h) / ns.getServerRequiredHackingLevel(h)]);
+        continue;
+      }
+      const s = mockPrepped(ns, h);
+      if (s.purchasedByPlayer) continue;
+      const b = calcBatch(ns, s, p, 0.5, ramOf);
+      if (!b) continue;
+      const chance = ns.formulas.hacking.hackChance(s, p);
+      const wt = ns.formulas.hacking.weakenTime(s, p);
+      scored.push([h, ((s.moneyMax ?? 0) * b.frac * chance) / (b.ram * wt)]);
+    } catch {
       continue;
     }
-    const s = mockPrepped(ns, h);
-    if (s.purchasedByPlayer) continue;
-    const b = calcBatch(ns, s, p, 0.5, ramOf);
-    if (!b) continue;
-    const chance = ns.formulas.hacking.hackChance(s, p);
-    const wt = ns.formulas.hacking.weakenTime(s, p);
-    scored.push([h, ((s.moneyMax ?? 0) * b.frac * chance) / (b.ram * wt)]);
   }
   return scored.sort((a, b) => b[1] - a[1]).map(([h]) => h);
 }
@@ -354,10 +386,39 @@ function prep(
     st.mode = "wait";
     return;
   }
-  place(ns, pool, SCRIPTS.weakenScript, w1Fit, ramOf.w, [target, Math.max(0, land - W - Date.now()), id]);
+
+  const pids: number[] = [];
+  const launch = (script: string, threads: number, ramPer: number, args: (string | number)[]): boolean => {
+    const placed = place(ns, pool, script, threads, ramPer, args);
+    if (!placed) {
+      for (const pid of pids) ns.kill(pid);
+      return false;
+    }
+    pids.push(...placed);
+    return true;
+  };
+  const fail = () => {
+    st.mode = "wait";
+    st.batches = 0;
+    st.frac = 0;
+    st.expected = 0;
+    st.busyUntil = Date.now() + 1_000;
+    st.cycleMs = 1_000;
+  };
+
+  if (!launch(SCRIPTS.weakenScript, w1Fit, ramOf.w, [target, Math.max(0, land - W - Date.now()), id])) {
+    fail();
+    return;
+  }
   if (g > 0) {
-    place(ns, pool, SCRIPTS.growScript, g, ramOf.g, [target, Math.max(0, land + S - G - Date.now()), id]);
-    place(ns, pool, SCRIPTS.weakenScript, w2, ramOf.w, [target, Math.max(0, land + 2 * S - W - Date.now()), id]);
+    if (!launch(SCRIPTS.growScript, g, ramOf.g, [target, Math.max(0, land + S - G - Date.now()), id])) {
+      fail();
+      return;
+    }
+    if (!launch(SCRIPTS.weakenScript, w2, ramOf.w, [target, Math.max(0, land + 2 * S - W - Date.now()), id])) {
+      fail();
+      return;
+    }
   }
   st.mode = "prep";
   st.batches = 0;
@@ -384,7 +445,8 @@ interface XpState {
 function xpFarm(
   ns: NS,
   hosts: string[],
-  skip: string[],
+  skip: ReadonlySet<string>,
+  batchTargets: string[],
   player: Player,
   pool: Pool,
   budgetGB: number,
@@ -395,13 +457,18 @@ function xpFarm(
   const F = ns.formulas.hacking;
   let best: { host: string; rate: number; time: number } | null = null;
   for (const h of hosts) {
-    if (h === "home" || isHacknet(h) || skip.includes(h) || !ns.hasRootAccess(h)) continue;
-    const s = ns.getServer(h);
-    if (s.purchasedByPlayer || (s.requiredHackingSkill ?? 0) > player.skills.hacking) continue;
-    const atMin = { ...s, hackDifficulty: s.minDifficulty };
-    const time = F.weakenTime(atMin, player);
-    const rate = F.hackExp(atMin, player) / Math.max(1, time);
-    if (time > 0 && (!best || rate > best.rate)) best = { host: h, rate, time };
+    if (h === "home" || isHacknet(h) || skip.has(h) || batchTargets.includes(h)) continue;
+    try {
+      if (!ns.hasRootAccess(h)) continue;
+      const s = ns.getServer(h);
+      if (s.purchasedByPlayer || (s.requiredHackingSkill ?? 0) > player.skills.hacking) continue;
+      const atMin = { ...s, hackDifficulty: s.minDifficulty };
+      const time = F.weakenTime(atMin, player);
+      const rate = F.hackExp(atMin, player) / Math.max(1, time);
+      if (time > 0 && (!best || rate > best.rate)) best = { host: h, rate, time };
+    } catch {
+      continue;
+    }
   }
   if (!best) return;
   const threads = Math.floor(budgetGB / ramPer);
