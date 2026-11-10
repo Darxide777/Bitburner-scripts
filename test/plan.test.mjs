@@ -1,7 +1,7 @@
 // Planner unit tests (run against the compiled output: `npm test`).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { plan, escalatedCost, purchaseOrder, augValue, bestNfgFaction, expToLevel, DEFAULT_PLAN } from "../dist/lib/plan/factions.js";
+import { plan, escalatedCost, purchaseOrder, augValue, bestNfgFaction, expToLevel, routeWeights, DEFAULT_PLAN } from "../dist/lib/plan/factions.js";
 
 const fac = (o = {}) => ({
   joined: false, invited: false, rep: 0, favor: 0, favorGain: 0, enemies: [], workTypes: [],
@@ -49,6 +49,41 @@ test("escalated cost buys most expensive first", () => {
 test("aug value weights rep and hacking, never zero", () => {
   assert.ok(augValue({ faction_rep: 1.1 }, DEFAULT_PLAN.weights) > augValue({ hacking: 1.05 }, DEFAULT_PLAN.weights));
   assert.ok(augValue({}, DEFAULT_PLAN.weights) > 0);
+});
+
+test("BN12 route weights favor income/XP before Daedalus, then rep", () => {
+  const w = world();
+  const base = DEFAULT_PLAN.weights;
+  const pre = routeWeights(w, base);
+  assert.ok(pre.hacking_money > base.hacking_money);
+  assert.ok(pre.hacking_exp > base.hacking_exp);
+  assert.equal(pre.faction_rep, base.faction_rep);
+
+  w.factions.Daedalus = fac({ joined: true });
+  const post = routeWeights(w, base);
+  assert.ok(post.faction_rep > base.faction_rep);
+  assert.equal(post.hacking_money, base.hacking_money);
+
+  w.installed = ["The Red Pill"];
+  assert.equal(routeWeights(w, base), base, "post-Red-Pill uses the configured weights");
+
+  const other = world({ node: 1 });
+  assert.equal(routeWeights(other, base), base, "other BitNodes are unchanged");
+});
+
+test("BN12 route weights change which augs the planner values", () => {
+  const w = world({ money: 1e12, installed: ["HackA", "RepB"] });
+  w.factions.CyberSec.augs.push("MoneyAug", "RepAug");
+  w.augs.MoneyAug = aug({ repReq: 0, price: 1e6, factions: ["CyberSec"], stats: { hacking_money: 3 } });
+  w.augs.RepAug = aug({ repReq: 0, price: 1e6, factions: ["CyberSec"], stats: { faction_rep: 1.5 } });
+  const value = (p, name) => p.ready.find((c) => c.aug === name)?.value ?? 0;
+
+  const pre = plan(input(w));
+  assert.ok(value(pre, "MoneyAug") > value(pre, "RepAug"), "income matters before Daedalus");
+
+  w.factions.Daedalus = fac({ joined: true });
+  const post = plan(input(w));
+  assert.ok(value(post, "RepAug") > value(post, "MoneyAug"), "rep matters after joining Daedalus");
 });
 
 test("does not join a city faction worth less than its enemies", () => {

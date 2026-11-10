@@ -18,7 +18,7 @@ import { BUILD_MARKER, DATA, GANG_KARMA, SCRIPTS } from "./lib/paths.js";
 import { call, callEach, CallError } from "./lib/call.js";
 import { collectFactionData } from "./lib/plan/collect.js";
 import { NFG, type FactionData } from "./lib/plan/data.js";
-import { augValue, DEFAULT_PLAN, plan as makePlan, type Plan, type PlanConfig } from "./lib/plan/factions.js";
+import { augValue, DEFAULT_PLAN, plan as makePlan, routeWeights, type Plan, type PlanConfig } from "./lib/plan/factions.js";
 import type { GangConfig } from "./lib/plan/gang.js";
 import type { GoConfig } from "./lib/plan/go.js";
 import { manageSleeves } from "./lib/sleeves.js";
@@ -83,6 +83,8 @@ interface DaemonConfig {
   hacknet: Partial<HacknetConfig>;
   manageStocks: boolean;
   stocks: Partial<StockConfig>;
+  /** Buy stock-market access once its cost is at most this share of cash (1 = as soon as affordable). */
+  stocksAccessBudgetFrac: number;
   stocksMinHomeGB: number;
   /** Sleeve shock-recovery rotation (see lib/plan/sleeves.ts DEFAULT_RECOVERY). */
   sleeveRecovery: Partial<RecoveryConfig>;
@@ -117,11 +119,12 @@ const DEFAULTS: DaemonConfig = {
   hacknet: {},
   manageStocks: true,
   stocks: {},
+  stocksAccessBudgetFrac: 0.5,
   stocksMinHomeGB: 512,
-  sleeveRecovery: {},
+  sleeveRecovery: { mode: "off" },
   manageBladeburner: true,
   bladeburner: {},
-  bladeburnerMinHomeGB: 512,
+  bladeburnerMinHomeGB: 2048,
 };
 
 export interface UserModule {
@@ -226,7 +229,7 @@ export async function main(ns: NS): Promise<void> {
     if (cfg.manageStocks) {
       const casinoBetting = ns.isRunning(SCRIPTS.casinoTable, "home");
       const reserveFrac = Math.max(DEFAULT_STOCKS.reserveFrac, current?.infraSpend ?? 0);
-      const ctl: StocksControl = { trade: !casinoBetting, cfg: { reserveFrac, ...cfg.stocks } };
+      const ctl: StocksControl = { trade: !casinoBetting, accessBudgetFrac: cfg.stocksAccessBudgetFrac, cfg: { reserveFrac, ...cfg.stocks } };
       writeJson(ns, DATA.stocksConfig, ctl);
       if (!ns.isRunning(SCRIPTS.stocksManager, "home") && ns.getServerMaxRam("home") >= cfg.stocksMinHomeGB && ns.exec(SCRIPTS.stocksManager, "home"))
         event("stocks", "started stock manager");
@@ -462,8 +465,9 @@ function recentRunRate(ns: NS, data: FactionData, cfg: PlanConfig, nodeStart: nu
   const installs = jsonl<{ t: number; kind: string; msg: string; data?: { bought?: string[]; nfg?: number } }>(DATA.events)
     .filter((e) => e.kind === "install" && e.msg.startsWith("installing ") && e.data?.bought)
     .map((e) => ({ t: e.t, bought: e.data!.bought!, nfg: e.data!.nfg ?? 0 }));
-  const valueOf = (a: string) => augValue(data.augs[a]?.stats ?? {}, cfg.weights) + (cfg.augBonus[a] ?? 0);
-  const valued = valueRuns(runs, installs, valueOf, augValue(data.augs[NFG]?.stats ?? {}, cfg.weights));
+  const weights = routeWeights(data, cfg.weights);
+  const valueOf = (a: string) => augValue(data.augs[a]?.stats ?? {}, weights) + (cfg.augBonus[a] ?? 0);
+  const valued = valueRuns(runs, installs, valueOf, augValue(data.augs[NFG]?.stats ?? {}, weights));
   runRateCache = { t: Date.now(), rate: averageRate(valued) };
   return runRateCache.rate;
 }
@@ -637,6 +641,7 @@ async function graftingModule(ns: NS, data: FactionData, p: Plan, dcfg: DaemonCo
   for (const c of p.pending) eta.set(c.aug, Number.isFinite(c.repEta) ? c.repEta : 1e9);
   const entropy = (await call<{ entropy: number }>(ns, "getPlayer"))?.entropy ?? 0;
   const hasCongruity = data.installed.includes(CONGRUITY);
+  const weights = routeWeights(data, cfg.weights);
   const rows = evaluateGrafts(
     augs.map((a, k) => ({
       aug: a,
@@ -645,7 +650,7 @@ async function graftingModule(ns: NS, data: FactionData, p: Plan, dcfg: DaemonCo
       stats: data.augs[a]?.stats ?? statsOf.get(a) ?? {},
       factionEtaSec: eta.has(a) ? eta.get(a)! : null,
     })),
-    cfg.weights,
+    weights,
     { hasCongruity, entropy, bonus: cfg.augBonus },
   );
   graftTop = rows[0] ?? null;
@@ -656,7 +661,7 @@ async function graftingModule(ns: NS, data: FactionData, p: Plan, dcfg: DaemonCo
     {
       t: Date.now(),
       entropy,
-      entropyCost: hasCongruity ? 0 : entropyCost(cfg.weights),
+      entropyCost: hasCongruity ? 0 : entropyCost(weights),
       hasCongruity,
       money: data.money,
       workRepPerSec: work ? (data.factions[work]?.workRepPerSec ?? 0) : 0,
@@ -737,6 +742,10 @@ function bladeburnerCanJoin(data: FactionData, dcfg: DaemonConfig): boolean {
   return data.installed.includes(GENESIS) || (stanekStatus !== null && stanekStatus.state !== "accepted");
 }
 
+function stopManager(ns: NS, script: string): void {
+  for (const p of ns.ps("home")) if (p.filename === script) ns.kill(p.pid);
+}
+
 async function bladeburnerModule(
   ns: NS,
   data: FactionData,
@@ -746,7 +755,10 @@ async function bladeburnerModule(
   event: (k: string, msg: string, d?: unknown) => void,
 ) {
   bladeburnerWanted = false;
-  if (!dcfg.manageBladeburner) return;
+  if (!dcfg.manageBladeburner) {
+    stopManager(ns, SCRIPTS.bladeburnerManager);
+    return;
+  }
   if (!(data.sourceFiles["7"] > 0) && data.node !== 7) return; // no API access
   const stanekSettled = bladeburnerCanJoin(data, dcfg);
   const ctl: BladeburnerControl = { canJoin: stanekSettled, usePlayer: p.bladeburner && !casinoRunning, cfg: dcfg.bladeburner };
@@ -758,11 +770,14 @@ async function bladeburnerModule(
     if (bbInDivision) event("bladeburner", "joined the Bladeburner division");
   }
   writeJson(ns, DATA.bladeburnerConfig, ctl);
+  if (!stanekSettled || ns.getServerMaxRam("home") < dcfg.bladeburnerMinHomeGB) {
+    stopManager(ns, SCRIPTS.bladeburnerManager);
+    return;
+  }
   if (ns.isRunning(SCRIPTS.bladeburnerManager, "home")) {
     bladeburnerWanted = true;
     return;
   }
-  if (!stanekSettled || ns.getServerMaxRam("home") < dcfg.bladeburnerMinHomeGB) return;
   bladeburnerWanted = true;
   if (ns.exec(SCRIPTS.bladeburnerManager, "home")) event("bladeburner", "started Bladeburner manager");
 }
@@ -934,7 +949,8 @@ async function factionsModule(
       money: s.money,
     });
     // for the run record: why, the install-timing rates, and what each aug is worth
-    const valueOf = (a: string) => augValue(data.augs[a]?.stats ?? {}, cfg.weights) + (cfg.augBonus[a] ?? 0);
+    const weights = routeWeights(data, cfg.weights);
+    const valueOf = (a: string) => augValue(data.augs[a]?.stats ?? {}, weights) + (cfg.augBonus[a] ?? 0);
     writeJson(ns, DATA.installContext, {
       t: Date.now(),
       reason: p.install.reason,

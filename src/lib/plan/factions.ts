@@ -238,6 +238,24 @@ export function augValue(stats: Record<string, number>, weights: Record<string, 
   return Math.max(BASE_VALUE, v);
 }
 
+/**
+ * Aug values for the current endgame route. BN12's Red Pill run has two stretches:
+ * before Daedalus, the $100b invite and hacking level gate the join, so income and XP
+ * matter more than faction rep; after joining, Daedalus rep is the path to The Red Pill.
+ * Every other route (and the post-Red-Pill destroy phase) uses the configured weights.
+ */
+export function routeWeights(data: FactionData, weights: Record<string, number>): Record<string, number> {
+  if (data.node !== 12 || data.installed.includes(RED_PILL)) return weights;
+  const w = { ...weights };
+  if (data.factions.Daedalus?.joined) {
+    w.faction_rep = (w.faction_rep ?? 0) * 2;
+  } else {
+    w.hacking_money = (w.hacking_money ?? 0) * 2;
+    w.hacking_exp = (w.hacking_exp ?? 0) * 1.5;
+  }
+  return w;
+}
+
 /** Total $ to buy `prices` with escalation, most expensive first. */
 export function escalatedCost(prices: number[], mult: number): number {
   return [...prices].sort((a, b) => b - a).reduce((sum, p, i) => sum + p * mult ** i, 0);
@@ -268,8 +286,9 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
   const owned = new Set([...data.installed, ...data.queued]);
   const F = data.factions;
   const usable = (f: string) => !SKIP_FACTIONS.includes(f);
+  const weights = routeWeights(data, cfg.weights);
   const value = (a: string) =>
-    a === RED_PILL ? 1e6 : augValue(data.augs[a].stats, cfg.weights) + (cfg.augBonus[a] ?? 0);
+    a === RED_PILL ? 1e6 : augValue(data.augs[a].stats, weights) + (cfg.augBonus[a] ?? 0);
 
   // ---------- which factions can we buy from ----------
   const joined = Object.keys(F).filter((f) => F[f].joined);

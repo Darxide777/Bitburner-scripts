@@ -61,7 +61,7 @@ daemon.js                 orchestrator: telemetry → metrics → planner module
 ├─ corp/manager.js        corporation: Agriculture, investors, dividends (all calls via proxy, SF3)
 ├─ hacknet/manager.js     hacknet servers: hashes by value, production by payback (~10 GB, SF9)
 ├─ stocks/manager.js      4S-forecast stock trader, longs + shorts (~37 GB, home ≥ 512 GB)
-├─ bladeburner/manager.js Bladeburner: join, skills, city, actions (~73 GB, home ≥ 512 GB)
+├─ bladeburner/manager.js Bladeburner: join, skills, city, actions (~73 GB, home ≥ 2048 GB)
 ├─ infiltrate.js          infiltration autoplayer: reads each minigame's model, trades intel for rep
 └─ casino.js              blackjack save-scummer for the casino's $10b-per-install allowance
 lib/                      task runner, call proxy, metrics, network, file IO, formatting
@@ -150,9 +150,10 @@ the gang in the joined gang faction with the most valuable unowned augs. Every g
   length − time since the last install) is under 10 min (`holdAscendSec`); `data/gang.txt`
   shows each install's projected effect (`installFactor`, from `getInstallResult`).
 
-**Sleeves** (`lib/plan/sleeves.ts`, `lib/sleeves.ts`). One recovery slot rotates by shock: the
-most-shocked sleeve recovers (it produces least, so benching it costs least) and hands over once
-another sleeve is 5 points worse (`"sleeveRecovery": {"slots", "margin", "mode": "rotate"|"spare"|"off"}`).
+**Sleeves** (`lib/plan/sleeves.ts`, `lib/sleeves.ts`). Recovery is off by default; enable a
+rotation with `"sleeveRecovery": {"slots": 1, "margin": 5, "mode": "rotate"}` when runs are long
+enough to pay back shock recovery. In rotation the most-shocked sleeve recovers (it produces
+least, so benching it costs least) and hands over once another sleeve is 5 points worse.
 With no gang yet, the others commit the crime with the most expected karma per second (karma is
 only granted on success: Homicide 3 per 3 s vs Mug 0.25 per 4 s, so Homicide wins above ~6% of
 Mug's success chance), which
@@ -232,7 +233,7 @@ Hacknet servers never run scripts (`isHacknet` in `lib/net.ts`): RAM in use lowe
 production, and hashes sell for money anyway.
 
 **Stocks** (`lib/plan/stocks.ts` decides, `stocks/manager.ts` acts). Buys a WSE account, TIX API
-and 4S Market Data TIX API once each costs ≤20% of cash (they survive installs), then trades on
+and 4S Market Data TIX API once each costs ≤50% of cash (`stocksAccessBudgetFrac`; `1` buys as soon as affordable; they survive installs), then trades on
 every market update: long above a 0.55 forecast, short below 0.45 (SF8.2), best expected return
 (|forecast − 0.5| × volatility) first, closing when the forecast crosses 0.5. It keeps the
 planner's current infra share (≥10%) in cash and pauses while the casino bets. The planner
@@ -249,7 +250,8 @@ same signals (entry at the ask, exit at the bid), and real entries are allowed o
 ≥10 closed trades whose mean return beats both legs' commissions on a typical position, while
 the last 10 real pre-4S trades aren't net negative (re-checked every tick, so it can switch on
 and off). No new entries when the 4S API is affordable within 15 min (net worth vs. its cost ÷
-the 20% rule, at the measured income); once net worth covers it, positions are sold to buy it.
+the configured budget share, at the measured income); once net worth covers it, positions are
+sold to buy it.
 `"stocks": ...` / `preCfg` tune it; `pre4s: false` in the stock control turns it off.
 
 **Infiltration** (`lib/plan/infiltration.ts` decides, `infiltrate.ts` plays). The game punishes
