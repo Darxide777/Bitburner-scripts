@@ -173,6 +173,7 @@ export async function main(ns: NS): Promise<void> {
   let lastFactions = 0;
   let lastMetricsLine = 0;
   let lastContracts = 0;
+  let lastCleanup = 0;
   let selftestStarted = false;
   let current: Plan | null = null;
   let lastNotes = "";
@@ -265,6 +266,9 @@ export async function main(ns: NS): Promise<void> {
         selftestStarted = spawnTask(ns, "tasks/contracts-selftest.js", [build]) > 0;
       if (Date.now() - lastContracts > cfg.contractsEveryMs && spawnTask(ns, "tasks/contracts.js") > 0) lastContracts = Date.now();
     }
+
+    // ---- scratch cleanup: stale tmp/call in/out files otherwise stay in the save forever ----
+    if (Date.now() - lastCleanup > 30 * 60_000 && spawnTask(ns, "tasks/cleanup.js") > 0) lastCleanup = Date.now();
 
     // ---- hacking manager ----
     const wanted: string[] = [];

@@ -2,7 +2,7 @@
 // in-game files; no real network, host, or credential is involved.
 import type { NS } from "@ns";
 import type { DaemonContext } from "../../daemon.js";
-import { readJson, writeJson } from "../../lib/io.js";
+import { appendLines, readJson, writeJson } from "../../lib/io.js";
 import { DATA } from "../../lib/paths.js";
 import {
   REWARD_PORT,
@@ -20,6 +20,8 @@ import {
 const SETUP_REFRESH_MS = 5 * 60_000;
 const START_RETRY_MS = 30_000;
 const LOOP_MS = 15_000;
+/** Reward lines kept in the in-save ledger; older ones are trimmed (this file isn't archived). */
+const MAX_REWARDS = 2000;
 
 function log(ns: NS, message: string): void {
   ns.print("[dnet-manager] " + message);
@@ -34,7 +36,7 @@ function drainRewards(ns: NS, p: DnetPaths): string[] {
   }
   if (!lines.length) return lines;
   try {
-    ns.write(p.rewards, lines.join("\n") + "\n", "a");
+    appendLines(ns, p.rewards, lines, MAX_REWARDS);
   } catch {}
   for (const line of lines) log(ns, "reward " + line);
   return lines;
