@@ -102,14 +102,22 @@ export async function main(ns: NS): Promise<void> {
     // ---- RAM pool ----
     const pool: Pool = new Map();
     let managedRam = 0;
+    // rooted RAM by kind (GB) for telemetry; `usedGB` covers the hosts this manager may use
+    const ramBy = { homeGB: 0, cloudGB: 0, hnetGB: 0, otherGB: 0, skippedGB: 0, usedGB: 0 };
     for (const h of hosts) {
-      // Hacknet RAM is normally off-limits (using it cuts hash production), but in
-      // share-only mode faction rep is worth more than hashes.
-      if ((!cfg.shareOnly && isHacknet(h)) || skipHosts.has(h)) continue;
       try {
         if (!ns.hasRootAccess(h)) continue;
         const max = ns.getServerMaxRam(h);
         if (max <= 0) continue;
+        if (isHacknet(h)) ramBy.hnetGB += max;
+        else if (skipHosts.has(h)) ramBy.skippedGB += max;
+        else if (h === "home") ramBy.homeGB += max;
+        else if (h.startsWith("cloud-")) ramBy.cloudGB += max;
+        else ramBy.otherGB += max;
+        // Hacknet RAM is normally off-limits (using it cuts hash production), but in
+        // share-only mode faction rep is worth more than hashes.
+        if ((!cfg.shareOnly && isHacknet(h)) || skipHosts.has(h)) continue;
+        ramBy.usedGB += ns.getServerUsedRam(h);
         if (!ready.has(h) || !ns.fileExists(SCRIPTS.weakenScript, h)) {
           if (h !== "home") ns.scp(workers, h, "home");
           ready.add(h);
@@ -196,6 +204,8 @@ export async function main(ns: NS): Promise<void> {
         formulas: hasFormulas(),
         poolTotal,
         poolFreeAfter: sum(pool),
+        managedRam,
+        ramBy,
         shareThreads,
         shareOnly: cfg.shareOnly === true,
         xp: (cfg.xpShare ?? 0) > 0 ? { ...xp } : null,

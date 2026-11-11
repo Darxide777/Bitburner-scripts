@@ -66,6 +66,7 @@ export async function main(ns: NS): Promise<void> {
       homeCores: home.cpuCores,
       gang,
       sleeves,
+      shareMult: ns.getSharePower(),
     };
   });
 }

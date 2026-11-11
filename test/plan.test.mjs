@@ -650,3 +650,20 @@ test("no 'unlocks donations' install for factions that take no donations", () =>
   const p = plan(input(w, { sinceInstall: 3600_000, avgRunRate: 1e-9 }));
   assert.ok(!p.install || !p.install.reason.includes("donations at Church"), p.install?.reason);
 });
+
+test("telemetry: the plan says why no install is planned, and what one would bank", () => {
+  const young = plan(input(installWorld(), { sinceInstall: 60_000, avgRunRate: null }));
+  assert.equal(young.install, null);
+  assert.equal(young.installHold.key, "min-run");
+  const waiting = plan(input(installWorld(), { sinceInstall: 3600_000, avgRunRate: 1e-9 }));
+  assert.equal(waiting.installHold.key, "waiting");
+  assert.match(waiting.installHold.msg, /recent runs'/);
+  assert.ok(waiting.readyValue > 0);
+  assert.ok(Math.abs(waiting.installRates.own - waiting.readyValue / 3600) < 1e-12);
+  const few = plan(input(world(), { sinceInstall: 3600_000 }));
+  assert.ok(["no-augs", "few-augs"].includes(few.installHold.key), few.installHold.key);
+  const going = plan(input(installWorld(), { sinceInstall: 3600_000, avgRunRate: 1e3 }));
+  assert.ok(going.install);
+  assert.equal(going.installHold, null);
+  assert.equal(going.redPill, null, "no Red Pill candidate without Daedalus");
+});

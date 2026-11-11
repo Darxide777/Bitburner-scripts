@@ -1,7 +1,7 @@
 // Install timing tests (run against the compiled output: `npm test`).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { valueRuns, averageRate, compareRun } from "../dist/lib/plan/runs.js";
+import { valueRuns, averageRate, compareRun, tally } from "../dist/lib/plan/runs.js";
 
 test("runs are valued by the augs their install bought; average = total value / total time", () => {
   const runs = [
@@ -44,4 +44,17 @@ test("compareRun reports percent changes and skips missing fields", () => {
   assert.equal(old.earnedPct, null, "old records still compare duration");
   assert.equal(compareRun(cur, null), null);
   assert.equal(compareRun(cur, { durationMs: 0 }), null);
+});
+
+test("tally sums a counter across its writer's restarts", () => {
+  let t = tally(undefined, { sell: 3, rank: 1 });
+  t = tally(t, { sell: 5, rank: 1 });
+  assert.deepEqual(t.total, { sell: 5, rank: 1 });
+  // the manager restarted: its totals start over, ours keep growing
+  t = tally(t, {});
+  t = tally(t, { sell: 2 });
+  t = tally(t, { sell: 4, rank: 1 });
+  assert.deepEqual(t.total, { sell: 9, rank: 2 });
+  // a stale or missing status file changes nothing
+  assert.deepEqual(tally(t, undefined).total, t.total);
 });

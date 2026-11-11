@@ -31,7 +31,9 @@ const ms = jsonl(pick("milestones"));
 if (!nodes.length) console.log("no cleared BitNode recorded yet (logs/nodes.txt)\n");
 for (const n of nodes) {
   console.log(
-    `BN${n.node ?? "?"} cleared ${new Date(n.t).toISOString().slice(0, 16)}: ${h(n.durationMs)}, ${n.installs} installs${
+    `BN${n.node ?? "?"}${n.nodeLevel != null ? `.${n.nodeLevel}` : ""} cleared ${new Date(n.t).toISOString().slice(0, 16)}: ${h(n.durationMs)}${
+      n.gapMs > 0 ? ` (${h(n.trackedMs ?? n.durationMs - n.gapMs)} tracked, ${h(n.gapMs)} untracked)` : ""
+    }, ${n.installs} installs${
       n.avgRunMs != null ? ` (avg run ${h(n.avgRunMs)})` : ""
     }, route ${n.route ?? "?"}`,
   );
@@ -39,6 +41,7 @@ for (const n of nodes) {
     console.log(
       `  earned ${money(n.earnedTotal)}   spent ${money(n.spent)}   hack XP ${num(n.hackExpGained)}   peak ${money(n.peakIncomePerSec)}/s   peak rep ${num(n.peakRepPerSec)}/s   peak cash ${money(n.peakMoney)}`,
     );
+  if (n.builds?.length) console.log(`  builds ${n.builds.map((b) => String(b).slice(0, 7)).join(", ")}`);
   const sources = Object.entries(n.earned ?? {})
     .filter(([name, v]) => name !== "total" && typeof v === "number" && v !== 0)
     .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))

@@ -34,7 +34,7 @@ import { DEFAULT_STOCKS, type StockConfig } from "./lib/plan/stocks.js";
 import type { StocksControl, StocksStatus } from "./stocks/manager.js";
 import type { HacknetControl, HacknetStatus } from "./hacknet/manager.js";
 import { expectedRunMs, type HacknetConfig } from "./lib/plan/hacknet.js";
-import { averageRate, compareRun, valueRuns, type RunRecord } from "./lib/plan/runs.js";
+import { averageRate, compareRun, tally, valueRuns, type RunRecord, type Tally } from "./lib/plan/runs.js";
 import type { CorpConfig } from "./lib/plan/corp.js";
 import { chooseTarget, cooldownAfter, DEFAULT_INFILTRATION, type InfiltrationConfig } from "./lib/plan/infiltration.js";
 import {
@@ -196,8 +196,43 @@ interface DaemonState {
     startRepTotal?: number;
     lastRepTotal?: number;
     lastEarned?: Snapshot["earned"];
+    /** time of the last snapshot, to spot stretches nothing was tracked (game closed, daemon down) */
+    lastT?: number;
+    /** untracked ms inside this run (sum of snapshot gaps over GAP_MS) */
+    gapMs?: number;
+    /** BitNode level being played (source-file level + 1), fixed at run start */
+    nodeLevel?: number;
+    /** every build that ran during this run, in order */
+    builds?: string[];
+    /** rooted RAM by kind at run start and at the last tick (hack/manager.ts `ramBy`) */
+    startRam?: RamBy;
+    lastRam?: RamBy;
+    /** hash purchases this run, summed across hacknet manager restarts */
+    hashes?: Tally;
+    /** hacknet production purchases this run (level/ram/cores/server/cache) */
+    hashProduction?: Tally;
+    lastHashRate?: number;
   };
+  /** untracked ms this BitNode, and every build that ran in it */
+  nodeGapMs?: number;
+  nodeBuilds?: string[];
 }
+
+/** Rooted RAM by kind, GB (written by hack/manager.ts). */
+type RamBy = { homeGB: number; cloudGB: number; hnetGB: number; otherGB: number; skippedGB: number; usedGB: number };
+
+/** What the daemon reads from data/hack.txt. */
+interface HackInfo {
+  expectedPerSec?: number;
+  poolTotal?: number;
+  managedRam?: number;
+  ramBy?: RamBy;
+  shareThreads?: number;
+  shareOnly?: boolean;
+}
+
+/** A snapshot gap longer than this counts as untracked time (ticks are seconds apart). */
+const GAP_MS = 5 * 60_000;
 
 const STATE_FILE = "data/daemon-state.txt";
 
@@ -225,8 +260,18 @@ export async function main(ns: NS): Promise<void> {
     recent.length = Math.min(recent.length, 8);
   };
 
-  event("start", "daemon started");
   const build = ns.read(BUILD_MARKER);
+  event("start", "daemon started", { build });
+  // why each gated action isn't happening; kept in a file so the casino's reloads
+  // (each restarts the daemon) don't log the same reason a hundred times
+  const gates = readJson<Record<string, string>>(ns, DATA.gates, {});
+  const gate = (name: string, g: { key: string; msg: string } | null) => {
+    const key = g?.key ?? "";
+    if ((gates[name] ?? "") === key) return;
+    gates[name] = key;
+    writeJson(ns, DATA.gates, gates);
+    if (g) event("gate", `${name}: ${g.msg}`, { gate: name, key });
+  };
 
   while (true) {
     // ---- new build pushed by tools/sync.mjs → restart on it ----
@@ -245,7 +290,7 @@ export async function main(ns: NS): Promise<void> {
     const snap = await runTask<Snapshot>(ns, "tasks/snapshot.js");
     if (snap.ok && snap.value) {
       tracker.push(snap.value);
-      trackRuns(ns, snap.value, tracker, event);
+      trackRuns(ns, snap.value, tracker, event, build);
     } else if (snap.error !== lastError) {
       lastError = snap.error ?? "";
       event("error", `snapshot failed: ${snap.error}`);
@@ -254,7 +299,7 @@ export async function main(ns: NS): Promise<void> {
     const m = tracker.metrics();
 
     // ---- casino ($10b per install, early in a run) ----
-    if (s && cfg.casino) casinoModule(ns, s, m, event);
+    if (s && cfg.casino) gate("casino", casinoModule(ns, s, m, event));
 
     // ---- IPvGO manager ----
     if (cfg.go.enabled !== false) {
@@ -404,6 +449,7 @@ export async function main(ns: NS): Promise<void> {
           event("error", `faction module failed: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
+      if (current) gate("install", current.install ? null : current.installHold);
       const notes = current?.notes.join("; ") ?? "";
       if (notes && notes !== lastNotes) event("plan", notes);
       lastNotes = notes;
@@ -428,7 +474,7 @@ export async function main(ns: NS): Promise<void> {
 
     // ---- persistence ----
     if (s) {
-      const hackStatus = readJson<{ expectedPerSec?: number; poolTotal?: number }>(ns, DATA.hackStatus, {});
+      const hackStatus = readJson<HackInfo>(ns, DATA.hackStatus, {});
       writeJson(ns, DATA.status, { snapshot: s, metrics: m, hack: hackStatus, plan: current, stanek: stanekStatus, ram: ramReport(ns) });
       const ctx: DaemonContext = {
         t: Date.now(),
@@ -445,7 +491,7 @@ export async function main(ns: NS): Promise<void> {
       writeJson(ns, DATA.context, ctx);
       if (Date.now() - lastMetricsLine > 60_000) {
         lastMetricsLine = Date.now();
-        appendJsonl(ns, DATA.metrics, { ...metricsLine(s, m, hackStatus), systems: systemsLine(ns) }, 1500);
+        appendJsonl(ns, DATA.metrics, { ...metricsLine(s, m, hackStatus, current, build), systems: systemsLine(ns) }, 1500);
       }
       draw(ns, s, m, hackStatus, current, recent);
     }
@@ -625,22 +671,33 @@ function graftingRunning(ns: NS, s?: Snapshot): boolean {
  * money on hand are checked too; otherwise a late-game install burns ~15 min of reloads
  * for what the gang makes in seconds.
  */
-function casinoModule(ns: NS, s: Snapshot, m: Metrics, event: (k: string, msg: string, d?: unknown) => void) {
-  if (ns.isRunning(SCRIPTS.casinoTable, "home")) return;
-  if (graftingRunning(ns, s)) return;
-  if ((s.earned.casino ?? 0) >= CASINO_CAP) return;
-  if (s.money >= CASINO_CAP) return; // it could at most double what we already hold
+function casinoModule(
+  ns: NS,
+  s: Snapshot,
+  m: Metrics,
+  event: (k: string, msg: string, d?: unknown) => void,
+): { key: string; msg: string } | null {
+  // null = nothing worth logging (claimed, betting, or the one-minute warm-up)
+  if (ns.isRunning(SCRIPTS.casinoTable, "home")) return null;
+  if ((s.earned.casino ?? 0) >= CASINO_CAP) return null;
+  if (graftingRunning(ns, s)) return { key: "graft", msg: "waiting, a graft owns the player" };
+  // it could at most double what we already hold
+  if (s.money >= CASINO_CAP) return { key: "rich", msg: `skipped, already holding ${money(s.money)}` };
   // don't trust an empty window: give the rate trackers a minute after (re)start.
   // (The long window: the short one spans *at most* 60 s, so testing it for >= 60 s only
   // passed by timing luck and the casino started 7-72 min into a node instead of ~2.)
-  if (m.long.spanMs < 60_000) return;
+  if (m.long.spanMs < 60_000) return null;
   const hackRate = readJson<{ expectedPerSec?: number }>(ns, DATA.hackStatus, {}).expectedPerSec ?? 0;
   const gangRate = (s.gang?.moneyRate ?? 0) * 5; // moneyGainRate is per 200 ms gang cycle
   const income = Math.max(m.short.income, m.long.income, gangRate + hackRate);
-  if (income * 1800 >= CASINO_CAP) return;
-  const last = readJson<{ lastAugReset?: number }>(ns, DATA.casino, {});
-  if (last.lastAugReset === s.lastAugReset) return;
-  if (ns.exec(SCRIPTS.casino, "home")) event("casino", "started blackjack save-scummer for the $10b casino allowance");
+  if (income * 1800 >= CASINO_CAP) return { key: "income", msg: `skipped, income ${money(income)}/s makes $10b within 30 min` };
+  const last = readJson<{ lastAugReset?: number; msg?: string }>(ns, DATA.casino, {});
+  if (last.lastAugReset === s.lastAugReset) return { key: "tried", msg: `not retried this install (${last.msg ?? "already attempted"})` };
+  if (ns.exec(SCRIPTS.casino, "home")) {
+    event("casino", "started blackjack save-scummer for the $10b casino allowance");
+    return null;
+  }
+  return { key: "ram", msg: "waiting, no free RAM on home for casino.js" };
 }
 
 const TRAVEL_COOLDOWN_MS = 120_000;
@@ -1128,10 +1185,11 @@ async function factionsModule(
   return p;
 }
 
-function metricsLine(s: Snapshot, m: Metrics, hackInfo: { expectedPerSec?: number; poolTotal?: number }) {
+function metricsLine(s: Snapshot, m: Metrics, hackInfo: HackInfo, p: Plan | null, build: string) {
   const r = m.long.spanMs >= 120_000 ? m.long : m.short;
   return {
     t: s.t,
+    build,
     node: s.node,
     sinceInstall: m.sinceInstall,
     money: s.money,
@@ -1145,15 +1203,52 @@ function metricsLine(s: Snapshot, m: Metrics, hackInfo: { expectedPerSec?: numbe
     hackLevel: s.hackLevel,
     hackExpPerSec: r.hackExp,
     hackExpected: hackInfo.expectedPerSec ?? 0,
+    /** free GB the hacking manager found at the start of its tick (not the pool's size: see `ram`) */
     ramPool: hackInfo.poolTotal ?? 0,
+    /** rooted GB by kind, GB in use on managed hosts, and GB the manager may use */
+    ram: hackInfo.ramBy ? { ...hackInfo.ramBy, managedGB: hackInfo.managedRam ?? 0 } : null,
+    shareThreads: hackInfo.shareThreads ?? 0,
+    shareOnly: hackInfo.shareOnly === true,
+    shareMult: s.shareMult ?? null,
     homeRam: s.homeRam,
     work: s.work?.type ?? null,
+    plan: p ? planLine(p) : null,
+  };
+}
+
+/** The planner's install/budget inputs, per minute: enough to replay a timing rule offline. */
+function planLine(p: Plan) {
+  const fin = (x: number) => (Number.isFinite(x) ? x : null);
+  return {
+    ready: p.ready.length,
+    readyValue: p.readyValue,
+    readyCost: p.readyCost,
+    marginal: p.installRates.marginal,
+    average: p.installRates.average,
+    own: p.installRates.own,
+    nextEta: fin(p.nextEta),
+    install: p.install?.reason ?? null,
+    hold: p.installHold?.key ?? null,
+    infraSpend: p.infraSpend,
+    infraBudget: p.infraBudget,
+    augReserve: fin(p.augReserve),
+    moneyBound: p.moneyBound,
+    repBound: p.repBound,
+    shareAll: p.shareAll,
+    redPillPush: p.redPillPush,
+    grind: p.work?.faction ?? p.company?.company ?? null,
+    hackXp: p.hackXp?.level ?? null,
+    redPill: p.redPill,
   };
 }
 
 function freshRun(s: Snapshot, start = s.lastAugReset): DaemonState["cur"] {
   const rep = sumNumbers(s.rep);
   return {
+    lastT: s.t,
+    gapMs: 0,
+    nodeLevel: (s.sourceFiles[String(s.node)] ?? 0) + 1,
+    builds: [],
     start,
     peakIncome: 0,
     peakRepRate: 0,
@@ -1204,7 +1299,7 @@ function previousInstallRun(ns: NS, node: number, before: number, after: number)
 }
 
 /** Detect augment installs / node resets and write one summary line per finished run. */
-function trackRuns(ns: NS, s: Snapshot, tracker: MetricsTracker, event: (k: string, m: string, d?: unknown) => void) {
+function trackRuns(ns: NS, s: Snapshot, tracker: MetricsTracker, event: (k: string, m: string, d?: unknown) => void, build: string) {
   const st = readJson<(DaemonState & { run?: DaemonState["cur"] }) | null>(ns, STATE_FILE, null);
   const m = tracker.metrics();
   const r = m.long.spanMs >= 120_000 ? m.long : m.short;
@@ -1234,6 +1329,23 @@ function trackRuns(ns: NS, s: Snapshot, tracker: MetricsTracker, event: (k: stri
   cur.startRepTotal ??= sumNumbers(s.rep);
   cur.lastRepTotal ??= cur.startRepTotal;
   cur.lastEarned ??= { ...s.earned };
+  cur.nodeLevel ??= (s.sourceFiles[String(s.node)] ?? 0) + 1;
+  cur.builds ??= [];
+  if (build && cur.builds[cur.builds.length - 1] !== build) cur.builds.push(build);
+  st.nodeBuilds ??= [];
+  if (build && !st.nodeBuilds.includes(build)) st.nodeBuilds.push(build);
+
+  // untracked time: the game was closed (it catches up as bonus time) or the daemon was down.
+  // Either way the rates and durations around it are not comparable with tracked play.
+  const gap = cur.lastT ? s.t - cur.lastT : 0;
+  if (gap > GAP_MS) {
+    // a gap that spans a reset belongs to the run that just ended, up to the reset
+    const inRun = st.lastAugReset !== s.lastAugReset ? Math.max(0, s.lastAugReset - cur.lastT!) : gap;
+    cur.gapMs = (cur.gapMs ?? 0) + inRun;
+    st.nodeGapMs = (st.nodeGapMs ?? 0) + inRun;
+    event("gap", `nothing tracked for ${dur(gap)} (game closed or daemon down)`, { from: cur.lastT, to: s.t, ms: gap });
+  }
+  cur.lastT = s.t;
 
   if (st.lastAugReset !== s.lastAugReset) {
     const nodeReset = st.lastNodeReset !== s.lastNodeReset;
@@ -1287,10 +1399,20 @@ function trackRuns(ns: NS, s: Snapshot, tracker: MetricsTracker, event: (k: stri
       t: s.t,
       kind: nodeReset ? "node" : "install",
       node: s.node,
+      nodeLevel: cur.nodeLevel,
+      build,
+      builds: cur.builds,
       runIndex: st.installs + 1,
       nodeRun: (st.nodeInstalls ?? 0) + 1,
       startedAt: cur.start,
       durationMs,
+      gapMs: cur.gapMs ?? 0,
+      trackedMs: Math.max(0, durationMs - (cur.gapMs ?? 0)),
+      ramStart: cur.startRam,
+      ramEnd: cur.lastRam,
+      hashes: cur.hashes?.total,
+      hashProduction: cur.hashProduction?.total,
+      hashRateEnd: cur.lastHashRate,
       nodeElapsedMs: s.t - st.lastNodeReset,
       moneyStart: startMoney,
       moneyEnd: endMoney,
@@ -1338,7 +1460,12 @@ function trackRuns(ns: NS, s: Snapshot, tracker: MetricsTracker, event: (k: stri
       appendJsonl(ns, DATA.nodes, {
         t: s.t,
         node: dctx.node ?? null,
+        // the level just cleared: for BN12 every clear is harder than the last
+        nodeLevel: cur.nodeLevel,
+        builds: st.nodeBuilds,
         durationMs: nodeDuration,
+        gapMs: st.nodeGapMs ?? 0,
+        trackedMs: Math.max(0, nodeDuration - (st.nodeGapMs ?? 0)),
         installs: st.nodeInstalls,
         avgRunMs: st.nodeInstalls > 0 ? nodeDuration / st.nodeInstalls : null,
         route: (dctx.t ?? 0) >= st.lastNodeReset ? dctx.route : null,
@@ -1352,6 +1479,8 @@ function trackRuns(ns: NS, s: Snapshot, tracker: MetricsTracker, event: (k: stri
         peakMoney: st.nodePeakMoney,
       });
       st.nodeInstalls = 0;
+      st.nodeGapMs = 0;
+      st.nodeBuilds = build ? [build] : [];
       st.milestones = {};
       st.nodeEarned = {};
       st.nodeSpent = 0;
@@ -1365,6 +1494,7 @@ function trackRuns(ns: NS, s: Snapshot, tracker: MetricsTracker, event: (k: stri
     st.lastAugReset = s.lastAugReset;
     st.lastNodeReset = s.lastNodeReset;
     st.cur = freshRun(s);
+    if (build) st.cur.builds = [build];
   } else {
     // mid-run peak/end values; the pre-install tick is what the next run summary uses
     st.cur.peakIncome = Math.max(st.cur.peakIncome, r.income);
@@ -1376,6 +1506,19 @@ function trackRuns(ns: NS, s: Snapshot, tracker: MetricsTracker, event: (k: stri
     st.cur.lastRepTotal = sumNumbers(s.rep);
     st.cur.lastEarned = { ...s.earned };
   }
+  // what the money bought: RAM by kind and hacknet purchases (status files, if fresh)
+  const now = st.cur;
+  const hk = readJson<{ t?: number; ramBy?: RamBy }>(ns, DATA.hackStatus, {});
+  if (hk.ramBy && hk.t && s.t - hk.t < 60_000 && hk.t >= now.start) {
+    now.startRam ??= hk.ramBy;
+    now.lastRam = hk.ramBy;
+  }
+  const hn = readJson<{ t?: number; spent?: Record<string, number>; bought?: Record<string, number>; production?: number }>(ns, DATA.hacknet, {});
+  if (hn.t && s.t - hn.t < 60_000 && hn.t >= now.start) {
+    now.hashes = tally(now.hashes, hn.spent);
+    now.hashProduction = tally(now.hashProduction, hn.bought);
+    now.lastHashRate = hn.production;
+  }
   writeJson(ns, STATE_FILE, st);
 }
 
@@ -1383,7 +1526,7 @@ function draw(
   ns: NS,
   s: Snapshot,
   m: Metrics,
-  hackInfo: { expectedPerSec?: number; poolTotal?: number },
+  hackInfo: HackInfo,
   plan: Plan | null,
   recent: string[],
 ) {

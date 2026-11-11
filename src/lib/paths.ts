@@ -20,6 +20,7 @@ export const DATA = {
   destroyContext: "data/destroy-context.txt", // which route ended the BitNode
   milestones: "data/milestones.txt", // JSONL: first time each milestone happens in a BitNode
   nodes: "data/nodes.txt", // JSONL: one line per cleared BitNode
+  gates: "data/gates.txt", // last logged reason each gated action (casino, install) is not happening
   context: "data/context.txt", // daemon context for user modules (overwritten every tick)
   userReserve: "data/user-reserve.txt", // { hosts: [...] } user modules want the hacking manager to leave alone
   dnet: "data/dnet.txt", // darknet manager status

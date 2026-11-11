@@ -104,3 +104,26 @@ export function averageRate(rs: RunValue[], n = 5, min = 3): number | null {
   const time = recent.reduce((a, r) => a + r.durationSec, 0);
   return time > 0 ? recent.reduce((a, r) => a + r.value, 0) / time : null;
 }
+
+/**
+ * A counter that restarts from zero whenever its writer does (a manager's in-memory
+ * totals): `total` keeps the sum across restarts, `seen` is the writer's last value.
+ */
+export interface Tally {
+  total: Record<string, number>;
+  seen: Record<string, number>;
+}
+
+export function tally(prev: Tally | undefined, now: Record<string, number> | undefined): Tally {
+  const out: Tally = { total: { ...prev?.total }, seen: { ...prev?.seen } };
+  if (!now) return out;
+  for (const [k, v] of Object.entries(now)) {
+    const before = out.seen[k] ?? 0;
+    // a smaller value means the writer restarted: everything it shows is new
+    out.total[k] = (out.total[k] ?? 0) + (v >= before ? v - before : v);
+    out.seen[k] = v;
+  }
+  // keys the writer no longer reports: it restarted and hasn't bought those again yet
+  for (const k of Object.keys(out.seen)) if (!(k in now)) out.seen[k] = 0;
+  return out;
+}

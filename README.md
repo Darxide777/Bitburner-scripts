@@ -410,12 +410,13 @@ server RAM—runs 1-round `share()` until money is needed again.
 | file | contents |
 | --- | --- |
 | `data/status.txt` | latest snapshot + metrics (overwritten each tick) |
-| `data/metrics.txt` | JSONL, one line/minute: income/s (+ by source), rep/s per faction, karma/s, time to gang, hack xp/s, RAM pool, and `systems`: Bladeburner rank/rate, gang, Stanek bonuses, corp, stocks, hacknet, skills, sleeve shock |
-| `data/events.txt` | JSONL decision log (purchases, roots, resets, errors) |
-| `data/runs.txt` | JSONL, one line per augment install / node reset: duration, node elapsed, money/earned/run spend, install spend, hack level/XP/rep start→end and gains, peak income/rep/money, augs bought (+ NeuroFlux), their value/value-per-hour, install reason/rates, and `vsPrev` percent changes from the previous run |
-| `data/nodes.txt` | JSONL, one line per cleared BitNode: length, installs (average run length), winning route, every milestone's time, plus total earned/spent, hack XP, peak income/rep/money and earned-by-source totals |
+| `data/metrics.txt` | JSONL, one line/minute: income/s (+ by source), rep/s per faction, karma/s, time to gang, hack xp/s, the build that wrote it, `ramPool` (free GB the hacking manager found) and `ram` (rooted GB by kind: home/cloud/hacknet/other, GB in use, GB managed), share threads and the share() rep multiplier, `plan` (the planner's install and budget inputs: ready augs' count/value/cost, marginal/average/own value rates, next ETA, the install reason or why it is held, infra spend and budget, aug reserve, money-/rep-bound, the grind target, The Red Pill's rep gap and ETA), and `systems`: Bladeburner rank/rate, gang, Stanek bonuses, corp, stocks, hacknet, skills, sleeve shock |
+| `data/events.txt` | JSONL decision log (purchases, roots, resets, errors). `gate` events say why a gated action is *not* happening, once per change of reason: `casino: …` (already rich, income makes $10b within 30 min, no RAM, not retried) and `install: …` (run too young, too few augs, waiting earns more than the average, held for The Red Pill). `gap` events mark stretches nothing was tracked (game closed or daemon down for over 5 min). `start` events carry the build |
+| `data/gates.txt` | the last logged reason per gate (so the casino's reloads don't repeat it) |
+| `data/runs.txt` | JSONL, one line per augment install / node reset: duration, node elapsed, money/earned/run spend, install spend, hack level/XP/rep start→end and gains, peak income/rep/money, augs bought (+ NeuroFlux), their value/value-per-hour, install reason/rates, `vsPrev` percent changes from the previous run, the BitNode level played (`nodeLevel`), the builds that ran during it, untracked time (`gapMs`, `trackedMs`), rooted RAM by kind at start and end (`ramStart`/`ramEnd`), and hacknet purchases: hash upgrades bought by name (`hashes`), production bought by kind (`hashProduction`) and the final hash rate |
+| `data/nodes.txt` | JSONL, one line per cleared BitNode: length, installs (average run length), winning route, every milestone's time, plus total earned/spent, hack XP, peak income/rep/money and earned-by-source totals, the level cleared (`nodeLevel`), the builds that ran in it, and untracked time (`gapMs`, `trackedMs`) |
 | `data/milestones.txt` | JSONL: first time each milestone happens in a node (casino cap, gang, Bladeburner, Simulacrum, Stanek augs, Daedalus, Red Pill, w0r1d hack level, 4S, corp) |
-| `data/hack.txt` | hacking manager status: targets, batches, expected $/s |
+| `data/hack.txt` | hacking manager status: targets, batches, expected $/s, free and managed RAM, rooted RAM by kind (`ramBy`), share threads |
 
 ## User modules
 

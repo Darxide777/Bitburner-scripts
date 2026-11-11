@@ -32,6 +32,8 @@ export interface Snapshot {
     members: number;
   };
   sleeves: number;
+  /** faction rep multiplier from share() threads running right now (1 = none) */
+  shareMult?: number;
 }
 
 /** What tasks/graft.js is doing, for the daemon dashboard and diagnostics. */

@@ -182,7 +182,16 @@ export interface Plan {
   /** skill gates found, best value per second first (logged to judge them) */
   skillGates: SkillGate[];
   /** install timing inputs: best pending value/s if we wait vs. recent runs' average (null = no history yet) */
-  installRates: { marginal: number; average: number | null };
+  installRates: { marginal: number; average: number | null; own: number };
+  /**
+   * Why no install is planned right now (null when one is). `key` only changes when the
+   * blocker does, so the daemon can log one event per change; `msg` carries the numbers.
+   */
+  installHold: { key: string; msg: string } | null;
+  /** Total value of the augs an install would bank right now (ready + already queued). */
+  readyValue: number;
+  /** The Red Pill's remaining gap, while it is a candidate (Daedalus joined, not yet owned). */
+  redPill: { repGap: number; etaMs: number | null; price: number; donation: number } | null;
   /** Gym training (combat stat) to reach the Bladeburner division's 100-in-each requirement. */
   train: { stat: string; gym: string; city: string; focus: boolean } | null;
   /** Why destroy is (not) happening: Red Pill installed, w0r1d_d43m0n seen/rooted, hack level vs req. */
@@ -718,7 +727,8 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
   const valuablePending = pending.filter((p) => p.value > BASE_VALUE);
   // value per second this run has earned so far: what an install right now would bank
   const bankable = [...chosen, ...data.queued].filter((a) => a !== RED_PILL && a !== NFG && data.augs[a]);
-  const ownRate = since > 0 ? bankable.reduce((v, a) => v + value(a), 0) / (since / 1000) : 0;
+  const readyValue = bankable.reduce((v, a) => v + value(a), 0);
+  const ownRate = since > 0 ? readyValue / (since / 1000) : 0;
   let reason = "";
   if (data.queued.includes(RED_PILL) || buyNow.length) reason = "The Red Pill";
   else if (newAugs > 0 && since >= cfg.minRunMs) {
@@ -750,12 +760,30 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     }
     else if (favorUnlock) reason = `installing unlocks donations at ${favorUnlock}`;
   }
+  let installHold: Plan["installHold"] = null;
   if (redPillPush && reason && reason !== "The Red Pill") {
     notes.push(`holding install (${reason}) until The Red Pill`);
+    installHold = { key: "red-pill-push", msg: `held until The Red Pill (would install: ${reason})` };
     reason = "";
   } else if (postRedPill && reason) {
     notes.push(`holding install (${reason}) until w0r1d_d43m0n`);
+    installHold = { key: "post-red-pill", msg: `held until w0r1d_d43m0n (would install: ${reason})` };
     reason = "";
+  }
+  if (reason && !cfg.autoInstall) installHold = { key: "auto-off", msg: `autoInstall is off (would install: ${reason})` };
+  else if (!reason && !installHold) {
+    const avg = input.avgRunRate ?? ownRate;
+    const avgName = input.avgRunRate != null ? "recent runs'" : "this run's";
+    installHold =
+      newAugs === 0
+        ? { key: "no-augs", msg: "no new augs to install yet" }
+        : since < cfg.minRunMs
+          ? { key: "min-run", msg: `run younger than ${fmtS(cfg.minRunMs / 1000)}` }
+          : input.ratesReady === false
+            ? { key: "rates", msg: "rates not measured yet (daemon just started)" }
+            : newAugs < cfg.minAugsToInstall
+              ? { key: "few-augs", msg: `${newAugs} new aug(s) < ${cfg.minAugsToInstall}` }
+              : { key: "waiting", msg: `waiting earns ${perHour(marginal)}/h >= ${avgName} ${perHour(avg)}/h` };
   }
   if (reason && cfg.autoInstall) {
     const final = reason === "The Red Pill";
@@ -819,7 +847,17 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     grindScore,
     hackXp,
     study,
-    installRates: { marginal, average: input.avgRunRate ?? null },
+    installRates: { marginal, average: input.avgRunRate ?? null, own: ownRate },
+    installHold,
+    readyValue,
+    redPill: redPill
+      ? {
+          repGap: redPill.repGap,
+          etaMs: Number.isFinite(redPill.repEta) ? redPill.repEta * 1000 : null,
+          price: redPill.price,
+          donation: redPill.donation,
+        }
+      : null,
     skillGates: skillGates.slice(0, 8),
     train,
     worldDaemon: { redPill: data.installed.includes(RED_PILL), ...data.worldDaemon, hackLevel: data.hackLevel },

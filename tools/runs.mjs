@@ -81,7 +81,10 @@ for (const r of shown) {
   const nodeRun = r.nodeRun != null ? ` run ${r.nodeRun}` : "";
   const node = r.node != null ? `BN${r.node}` : "BN?";
   const reset = r.kind === "node" ? "  [node reset]" : "";
-  console.log(`${id}  ${node}${nodeRun}  ended ${when(r.t)}  ${dur(r.durationMs)}${reset}`);
+  const level = r.nodeLevel != null ? `.${r.nodeLevel}` : "";
+  const gap = r.gapMs > 0 ? ` (${dur(r.trackedMs ?? r.durationMs - r.gapMs)} tracked, ${dur(r.gapMs)} untracked)` : "";
+  const builds = r.builds?.length ? `  build ${r.builds.map((b) => String(b).slice(0, 7)).join("→")}` : "";
+  console.log(`${id}  ${node}${level}${nodeRun}  ended ${when(r.t)}  ${dur(r.durationMs)}${gap}${reset}${builds}`);
 
   const earned = r.earnedTotal ?? sumEarned(r.earned);
   const income = r.incomePerSec ?? rate(earned, r.durationMs);
@@ -89,9 +92,9 @@ for (const r of shown) {
   const installSpent = r.installSpent;
   const value = r.value;
   const valueRate = r.valueRate ?? valuePerHour(value, r.durationMs);
-  const level = r.hackLevelEnd ?? r.endHackLevel;
+  const hackLevel = r.hackLevelEnd ?? r.endHackLevel;
   const levelStart = r.hackLevelStart;
-  const levelGain = r.hackLevelGain ?? (level != null && levelStart != null ? Math.max(0, level - levelStart) : null);
+  const levelGain = r.hackLevelGain ?? (hackLevel != null && levelStart != null ? Math.max(0, hackLevel - levelStart) : null);
   const xp = r.hackExpPerSec;
   const repGain = r.repGained ?? (r.repEnd != null && r.repStart != null ? Math.max(0, r.repEnd - r.repStart) : null);
 
@@ -104,7 +107,7 @@ for (const r of shown) {
   if (bits.length) console.log(`  ${bits.join("   ")}`);
 
   const bits2 = [];
-  if (level != null) bits2.push(`hack ${levelStart != null ? `${num(levelStart)}→` : ""}${num(level)}${levelGain != null ? ` (+${num(levelGain)})` : ""}`);
+  if (hackLevel != null) bits2.push(`hack ${levelStart != null ? `${num(levelStart)}→` : ""}${num(hackLevel)}${levelGain != null ? ` (+${num(levelGain)})` : ""}`);
   if (r.augsBefore != null || r.augsAfter != null) {
     const nfg = r.nfg ? `, ${r.nfg} NFG` : "";
     bits2.push(`augs ${num(r.augsBefore)}→${num(r.augsAfter)}${nfg}`);
@@ -112,6 +115,24 @@ for (const r of shown) {
   if (repGain != null) bits2.push(`rep +${compact(repGain)}${r.repPerSec != null ? ` (${compact(r.repPerSec)}/s)` : ""}`);
   if (value != null) bits2.push(`value ${money(value)}${valueRate != null ? ` (${money(valueRate)}/h)` : ""}`);
   if (bits2.length) console.log(`  ${bits2.join("   ")}`);
+
+  // what the spending bought: RAM by kind (start → end) and hacknet purchases
+  const gb = (x) => (x == null ? "?" : x >= 1024 ? `${compact(x / 1024)}TB` : `${Math.round(x)}GB`);
+  const bits3 = [];
+  if (r.ramEnd) {
+    const kinds = [["home", "homeGB"], ["cloud", "cloudGB"], ["hacknet", "hnetGB"], ["rooted", "otherGB"]];
+    const ramBits = kinds
+      .filter(([, k]) => (r.ramEnd[k] ?? 0) > 0)
+      .map(([name, k]) => `${name} ${r.ramStart ? `${gb(r.ramStart[k])}→` : ""}${gb(r.ramEnd[k])}`);
+    if (ramBits.length) bits3.push(`RAM ${ramBits.join(", ")}`);
+  }
+  const counts = (o) => Object.entries(o ?? {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${v}× ${k}`).join(", ");
+  if (counts(r.hashes)) bits3.push(`hashes: ${counts(r.hashes)}`);
+  if (counts(r.hashProduction)) bits3.push(`hacknet bought: ${counts(r.hashProduction)}${r.hashRateEnd != null ? ` (${r.hashRateEnd.toFixed(2)} h/s)` : ""}`);
+  for (const b of bits3) console.log(`  ${b}`);
+  const e = r.earned ?? {};
+  if (e.hacknet_expenses || e.servers)
+    console.log(`  spent: servers ${money(-(e.servers ?? 0))}, hacknet ${money(-(e.hacknet_expenses ?? 0))} (hacknet returned ${money(e.hacknet ?? 0)})`);
 
   const vs = r.vsPrev ?? {
     durationPct: prev?.durationMs > 0 ? (r.durationMs - prev.durationMs) / prev.durationMs : null,
