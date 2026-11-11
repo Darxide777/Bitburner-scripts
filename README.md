@@ -385,7 +385,10 @@ setting `"mode"` there pins it).
 max money). All batches for a cycle are exec'd in one synchronous burst, so the Formulas
 timings are exact, and `additionalMsec` makes each batch land H→W→G→W. Several targets run
 concurrently, ranked by $ per GB·s. Leftover RAM is lent to factions via `share()` while
-faction-working.
+faction-working. In the BN12 Red Pill push, once the planner sees every wanted aug is affordable
+(no skill gate, Daedalus joined, Red Pill not installed) and only faction rep is left, it switches
+to *share-only*: in-flight money workers are killed and the whole hack pool runs 1-round `share()`
+until money is needed again.
 
 **Telemetry files** (on home, mirrored to `./logs/`):
 

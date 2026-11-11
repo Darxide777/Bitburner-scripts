@@ -182,6 +182,12 @@ export interface Plan {
   /** Number of wanted augs still gated on rep, per (best-source) faction. Not truncated. */
   repGated: Record<string, number>;
   nextEta: number;
+  /** At least one wanted aug is not affordable with cash on hand. */
+  moneyBound: boolean;
+  /** Every wanted aug is affordable and faction rep is the remaining blocker. */
+  repBound: boolean;
+  /** BN12 Red Pill run: money is done, so spend the whole hack pool on share(). */
+  shareAll: boolean;
   notes: string[];
 }
 
@@ -388,6 +394,7 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
 
   // ---------- what's next, and how long until it's ours ----------
   const income = Math.max(0, input.income);
+  let moneyBound = false;
   const pending = candidates
     .filter((c) => !chosen.has(c.aug))
     .map((c) => {
@@ -395,12 +402,14 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
       const needed =
         escalatedCost([...chosen, c.aug].map((a) => byAug.get(a)!.price), data.priceMult) + donations + c.donation;
       const short = needed - data.money;
+      if (short > 0) moneyBound = true;
       const moneyEta = short <= 0 ? 0 : income > 0 ? short / income : Infinity;
       return { ...c, eta: Math.max(c.repEta, moneyEta) * 1000 };
     })
     // most value per second of waiting first
     .sort((a, b) => b.value / Math.max(1000, b.eta) - a.value / Math.max(1000, a.eta));
   const nextEta = Math.min(Infinity, ...pending.map((p) => p.eta));
+  const repBound = !moneyBound && pending.some((c) => c.repGap > 0 && c.donation === 0);
 
   // requirement context (company rep included: company work can earn it)
   const reqCtx: ReqContext = {
@@ -717,6 +726,13 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
   const infraSpend = postRedPill
     ? 0.5
     : Math.min(0.5, Math.max(0.05, (0.5 * remaining) / (remaining + since + 1)));
+  const shareAll =
+    data.node === 12 &&
+    !!F.Daedalus?.joined &&
+    !data.installed.includes(RED_PILL) &&
+    !moneyBound &&
+    repBound &&
+    hackXp === null;
 
   return {
     join,
@@ -765,6 +781,9 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
       ),
     ],
     nextEta,
+    moneyBound,
+    repBound,
+    shareAll,
     notes,
   };
 }

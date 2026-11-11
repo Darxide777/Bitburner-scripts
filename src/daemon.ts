@@ -217,6 +217,7 @@ export async function main(ns: NS): Promise<void> {
   let current: Plan | null = null;
   let lastNotes = "";
   let lastError = "";
+  let lastShareOnly = false;
 
   const event = (kind: string, msg: string, data?: unknown) => {
     appendJsonl(ns, DATA.events, { t: Date.now(), kind, msg, data }, 3000);
@@ -338,23 +339,35 @@ export async function main(ns: NS): Promise<void> {
     const managerProxyGB = (procs.has(SCRIPTS.goManager) ? 10 : 0) + (procs.has(SCRIPTS.infiltrate) ? 17 : 0);
     const reserve = homeReserve(ns, wanted, (stanekStatus?.reserveGB ?? 0) + corpProxyGB + managerProxyGB);
     lastReserve = reserve;
+    const shareOnly = current?.shareAll === true && s?.work?.type === "FACTION";
+    if (shareOnly !== lastShareOnly) {
+      event(
+        "hack",
+        shareOnly
+          ? "money target met and faction rep is the bottleneck: sharing the whole pool"
+          : "money needed again: resuming hacking batches",
+      );
+      lastShareOnly = shareOnly;
+    }
     const hackCfg: Partial<HackConfig> = {
       homeReserve: reserve,
       // lend spare RAM to factions while we are working for one
       shareFrac: s?.work?.type === "FACTION" ? 1 : 0,
+      shareOnly,
       // hacking level gating something valuable: farm hacking XP with part of the pool.
       // For Daedalus, money stops being the bottleneck at $100b, so give XP the larger share.
-      xpShare: current?.hackXp
-        ? Math.min(
-            1,
-            Math.max(
-              0,
-              current.hackXp.why === "Daedalus" && (s?.money ?? 0) < DAEDALUS_MONEY
-                ? cfg.hackXpShare
-                : cfg.hackXpShareMax,
-            ),
-          )
-        : 0,
+      xpShare:
+        !shareOnly && current?.hackXp
+          ? Math.min(
+              1,
+              Math.max(
+                0,
+                current.hackXp.why === "Daedalus" && (s?.money ?? 0) < DAEDALUS_MONEY
+                  ? cfg.hackXpShare
+                  : cfg.hackXpShareMax,
+              ),
+            )
+          : 0,
       skipHosts: [...(stanekStatus?.reserveHosts ?? []), ...(readJson<{ hosts?: string[] }>(ns, DATA.userReserve, {}).hosts ?? [])],
     };
     writeJson(ns, DATA.hackConfig, hackCfg);
@@ -1430,6 +1443,7 @@ function draw(
     for (const c of plan.pending.slice(0, 4))
       L.push(`  ${pad(c.aug, 34)} ${pad(c.faction, 18)} ${pad(money(c.price), 9, true)}  ${dur(c.eta)}`);
     if (plan.install) L.push(`  → installing: ${plan.install.reason}`);
+    if (plan.shareAll && plan.work) L.push(`  → money target met: all hack RAM on ${plan.work.faction} rep`);
   }
 
   if (recent.length) {

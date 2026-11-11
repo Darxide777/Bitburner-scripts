@@ -86,6 +86,30 @@ test("BN12 route weights change which augs the planner values", () => {
   assert.ok(value(post, "RepAug") > value(post, "MoneyAug"), "rep matters after joining Daedalus");
 });
 
+test("BN12 shares the whole pool once money is done and rep is the bottleneck", () => {
+  const w = world({ money: 1e12 });
+  w.factions.Daedalus = fac({ joined: true });
+  const p = plan(input(w, { income: 1e6 }));
+  assert.equal(p.moneyBound, false);
+  assert.equal(p.repBound, true);
+  assert.equal(p.shareAll, true);
+});
+
+test("an unaffordable aug keeps BN12 share-all off", () => {
+  const w = world({ money: 1 });
+  w.factions.Daedalus = fac({ joined: true });
+  const p = plan(input(w));
+  assert.equal(p.moneyBound, true);
+  assert.equal(p.repBound, false);
+  assert.equal(p.shareAll, false);
+});
+
+test("share-all is limited to the BN12 Red Pill route", () => {
+  const w = world({ node: 1, money: 1e12 });
+  w.factions.Daedalus = fac({ joined: true });
+  assert.equal(plan(input(w, { income: 1e6 })).shareAll, false);
+});
+
 test("does not join a city faction worth less than its enemies", () => {
   const p = plan(input(world()));
   assert.ok(!p.join.includes("Sector-12"), `joined: ${p.join}`);

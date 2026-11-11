@@ -22,12 +22,14 @@ export interface HackConfig {
   spacing: number;
   /** Fraction of leftover RAM to spend on share() (0 disables). */
   shareFrac: number;
+  /** Spend the whole pool on share(): no money batches and no XP farm. */
+  shareOnly?: boolean;
   /** servers to leave alone entirely (e.g. the Stanek charger's) */
   skipHosts?: string[];
   /** share of the pool running weaken for hacking XP (0 = off), see xpFarm() */
   xpShare?: number;
 }
-export const DEFAULT_HACK_CONFIG: HackConfig = { homeReserve: 32, maxTargets: 6, spacing: 60, shareFrac: 0 };
+export const DEFAULT_HACK_CONFIG: HackConfig = { homeReserve: 32, maxTargets: 6, spacing: 60, shareFrac: 0, shareOnly: false };
 
 interface Batch {
   h: number;
@@ -73,6 +75,7 @@ export async function main(ns: NS): Promise<void> {
   let lastStatus = 0;
   let tag = 0;
   let shareThreads = 0;
+  let shareOnlyActive = false;
   const xp: XpState = { busyUntil: 0, target: "", threads: 0, expPerSec: 0 };
 
   const hasFormulas = () => ns.fileExists("Formulas.exe", "home");
@@ -89,6 +92,12 @@ export async function main(ns: NS): Promise<void> {
       lastHosts = now;
     }
     const player = ns.getPlayer();
+    if (cfg.shareOnly && !shareOnlyActive) {
+      for (const h of hosts)
+        for (const script of [SCRIPTS.hackScript, SCRIPTS.growScript, SCRIPTS.weakenScript]) ns.kill(script, h);
+      states.clear();
+    }
+    shareOnlyActive = cfg.shareOnly === true;
 
     // ---- RAM pool ----
     const pool: Pool = new Map();
@@ -113,10 +122,12 @@ export async function main(ns: NS): Promise<void> {
     const poolTotal = sum(pool);
     // Reserve a share of total managed RAM for XP, not just a share of whatever happens
     // to be free after the money batches: otherwise long-lived batches starve the farm.
-    const xpBudget = (cfg.xpShare ?? 0) > 0 ? managedRam * (cfg.xpShare ?? 0) : 0;
+    const xpBudget = !cfg.shareOnly && (cfg.xpShare ?? 0) > 0 ? managedRam * (cfg.xpShare ?? 0) : 0;
 
     // ---- target ranking (every 30s) ----
-    if (now - lastRank > 30_000 || ranked.length === 0) {
+    if (cfg.shareOnly) {
+      ranked = [];
+    } else if (now - lastRank > 30_000 || ranked.length === 0) {
       ranked = rankTargets(ns, hosts, player, ramOf, hasFormulas(), skipHosts);
       lastRank = now;
     }
@@ -139,7 +150,7 @@ export async function main(ns: NS): Promise<void> {
       workPool.set(h, free - take);
       reserve -= take;
     }
-    if (hasFormulas()) {
+    if (!cfg.shareOnly && hasFormulas()) {
       for (const target of ranked.slice(0, cfg.maxTargets)) {
         const st = states.get(target) ?? { busyUntil: 0, mode: "wait", batches: 0, frac: 0, expected: 0, cycleMs: 0 };
         states.set(target, st);
@@ -184,12 +195,13 @@ export async function main(ns: NS): Promise<void> {
         poolTotal,
         poolFreeAfter: sum(pool),
         shareThreads,
+        shareOnly: cfg.shareOnly === true,
         xp: (cfg.xpShare ?? 0) > 0 ? { ...xp } : null,
         expectedPerSec: targets.reduce((a, t) => a + t.ratePerSec, 0),
         targets,
       });
       ns.clearLog();
-      ns.print(`pool ${poolTotal.toFixed(0)}GB  share threads ${shareThreads}`);
+      ns.print(`pool ${poolTotal.toFixed(0)}GB  share threads ${shareThreads}${cfg.shareOnly ? "  (share-only)" : ""}`);
       for (const t of targets)
         ns.print(`${t.host.padEnd(20)} ${t.mode.padEnd(5)} x${String(t.batches).padEnd(4)} ${(t.frac * 100).toFixed(0)}%  $${t.ratePerSec.toExponential(2)}/s`);
     }
