@@ -127,7 +127,8 @@ collects faction/aug state and the planner decides:
   value per second (its value ÷ its ETA) than recent runs earned on average (aug value
   installed ÷ run length over the last 5 runs this BitNode: `data/runs.txt` lengths, valued from the augs each
   install event in `data/events.txt` bought), with at least `minAugsToInstall` new augs. Until 3
-  runs can be valued, the old rule: next aug further away than `installPatience` × the run so far.
+  runs can be valued, the average to beat is this run's own rate so far (value an install would
+  bank now ÷ run time), else the old rule: next aug further away than `installPatience` × the run so far.
   Also when the run exceeds `maxRunMs`, or when installing would unlock donations at a faction
   that takes them. In BN12, once Daedalus' actual aug requirement is met, `pushRedPill` (default on)
   suppresses installs until The Red Pill; set it false to keep the normal cadence. The push is
@@ -139,6 +140,7 @@ collects faction/aug state and the planner decides:
   RAM only gets whatever the NFG price/rep ladder leaves behind, and other ready augs are
   not queued for this install.
 - *infra spend*: the economy module's budget tapers from 50% to 5% as install approaches,
+  never assuming an install before `minRunMs` (so the first minutes of a run spend freely),
   because cloud servers are wiped on install. During the Red Pill push it follows The Red
   Pill's ETA instead of the next aug's, and after The Red Pill it opens to 50% because the
   only remaining goal is the final hack-level grind. In *share-only* mode the planner keeps
@@ -244,7 +246,8 @@ lengths); Sell for Corporation Funds ($1b to the corp, worth to you the corp's r
 profit ÷ valuation — × the dividends you actually receive per $ of profit × (1 − tribute) for the
 margin, since dividends are paid as x^(1 − tribute), over 12 h, halved for diminishing returns);
 Bladeburner Rank (seconds of progress saved at the measured rank/s, capped at what's
-left to Operation Daedalus, × income/s); Generate Coding Contract (average measured money
+left to Operation Daedalus, × income/s — and nothing while Operation Daedalus is more than
+`rankHorizonSec`, a day, away: another route ends the node first); Generate Coding Contract (average measured money
 reward). It buys the best one, saves for it when it beats selling and fits the cache, else
 sells; it measures each purchase's real effect and uses that instead of the 2% default.
 Production (level/RAM/cores/servers) is bought by payback time — it must pay back within half

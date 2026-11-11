@@ -6,7 +6,8 @@
 //   Reduce Minimum Security   target's $/s × hack-time speedup × time left in the run
 //                             (hack/grow/weaken time ∝ 2.5·reqHack·security + 500)
 //   Exchange for Bladeburner Rank  seconds of Bladeburner progress saved (+100 rank ÷ measured
-//                             rank/s, capped at what's left to Operation Daedalus) × income/s
+//                             rank/s, capped at what's left to Operation Daedalus) × income/s;
+//                             nothing while Operation Daedalus is more than a day away
 //   Generate Coding Contract  the average measured money reward (≥ 3 samples)
 // Server effects are wiped by installs, so "time left" is the expected rest of the run:
 // the median of recent run lengths minus the time since the last install.
@@ -30,6 +31,11 @@ export interface HacknetConfig {
   paybackFrac: number;
   /** $-value of one second of Bladeburner progress, as a multiple of income/s */
   rankSecondValue: number;
+  /**
+   * Bladeburner rank is only worth hashes while Operation Daedalus is within this many
+   * seconds at the measured rank/s: further out, another route ends the BitNode first.
+   */
+  rankHorizonSec: number;
   /** don't value anything over less than this (s) */
   minRemainingSec: number;
   /** horizon for corp funds (a corp lasts the whole BitNode), s */
@@ -42,6 +48,7 @@ export const DEFAULT_HACKNET: HacknetConfig = {
   budgetFrac: 0.25,
   paybackFrac: 0.5,
   rankSecondValue: 1,
+  rankHorizonSec: 24 * 3600,
   minRemainingSec: 600,
   corpHorizonSec: 12 * 3600,
   corpMarginalFactor: 0.5,
@@ -104,7 +111,10 @@ export function valueOptions(v: ValueInput, cfg: HacknetConfig = DEFAULT_HACKNET
   }
 
   const bb = v.bladeburner;
-  if (bb?.active && bb.rankPerSec > 0) {
+  // Seconds saved on Bladeburner only matter if Bladeburner is what finishes the node.
+  // BN12.27 telemetry: Daedalus 128 days away at 0.036 rank/s, yet rank was priced at
+  // $7.3m/hash (29× selling), which justified $23b of production for $1.3b of hashes.
+  if (bb?.active && bb.rankPerSec > 0 && Math.max(0, bb.finalRank - bb.rank) / bb.rankPerSec <= cfg.rankHorizonSec) {
     const gained = Math.min(100, Math.max(0, bb.finalRank - bb.rank));
     const saved = gained / bb.rankPerSec;
     add(BB_RANK, saved * v.incomePerSec * cfg.rankSecondValue, `+${gained} rank = ${Math.round(saved / 60)}m of Bladeburner`);

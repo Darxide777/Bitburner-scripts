@@ -38,11 +38,21 @@ test("min security: worth less once the floor (1) is reached", () => {
 });
 
 test("Bladeburner rank: valued by progress saved, capped at what's left", () => {
-  const slow = valueOptions(base({ bladeburner: { active: true, rank: 10, rankPerSec: 0.01, finalRank: 400_000 } })).find((x) => x.name === BB_RANK);
+  const slow = valueOptions(base({ bladeburner: { active: true, rank: 10, rankPerSec: 0.01, finalRank: 500 } })).find((x) => x.name === BB_RANK);
   assert.equal(Math.round(slow.value), Math.round((100 / 0.01) * 1e7)); // 10,000 s × $10m/s
   const nearlyDone = valueOptions(base({ bladeburner: { active: true, rank: 399_990, rankPerSec: 0.01, finalRank: 400_000 } })).find((x) => x.name === BB_RANK);
   assert.equal(Math.round(nearlyDone.value), Math.round((10 / 0.01) * 1e7));
   assert.equal(valueOptions(base({ bladeburner: { active: false, rank: 0, rankPerSec: 1, finalRank: 1 } })).find((x) => x.name === BB_RANK), undefined);
+});
+
+test("Bladeburner rank: worth nothing while Operation Daedalus is out of reach", () => {
+  // BN12.27: rank 1300 of 400,000 at 0.036/s = 128 days; the node ends by hacking in ~1
+  const far = valueOptions(base({ bladeburner: { active: true, rank: 1300, rankPerSec: 0.036, finalRank: 400_000 } }));
+  assert.equal(far.find((x) => x.name === BB_RANK), undefined);
+  assert.equal(far[0].name, SELL, "production is then priced at the selling floor");
+  const day = DEFAULT_HACKNET.rankHorizonSec;
+  const within = valueOptions(base({ bladeburner: { active: true, rank: 0, rankPerSec: 1, finalRank: day } }));
+  assert.ok(within.find((x) => x.name === BB_RANK));
 });
 
 test("contracts need >= 3 measured rewards", () => {
@@ -78,7 +88,7 @@ test("expected run length: median of the last 5 runs", () => {
 });
 
 test("doesn't save for an option it can't reach before the run ends", () => {
-  const o = valueOptions(base({ bladeburner: { active: true, rank: 10, rankPerSec: 0.01, finalRank: 400_000 } }));
+  const o = valueOptions(base({ bladeburner: { active: true, rank: 10, rankPerSec: 0.01, finalRank: 500 } }));
   assert.equal(o[0].name, BB_RANK);
   assert.equal(decideSpend(o, 10, 1000, 0.001, 1800).kind, "sell", "250 hashes at 0.001/s = 69 h");
   assert.equal(decideSpend(o, 10, 1000, 1, 1800).kind, "save", "240 s away");

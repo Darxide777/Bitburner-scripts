@@ -630,8 +630,10 @@ function casinoModule(ns: NS, s: Snapshot, m: Metrics, event: (k: string, msg: s
   if (graftingRunning(ns, s)) return;
   if ((s.earned.casino ?? 0) >= CASINO_CAP) return;
   if (s.money >= CASINO_CAP) return; // it could at most double what we already hold
-  // don't trust an empty window: give the rate trackers a minute after (re)start
-  if (m.short.spanMs < 60_000) return;
+  // don't trust an empty window: give the rate trackers a minute after (re)start.
+  // (The long window: the short one spans *at most* 60 s, so testing it for >= 60 s only
+  // passed by timing luck and the casino started 7-72 min into a node instead of ~2.)
+  if (m.long.spanMs < 60_000) return;
   const hackRate = readJson<{ expectedPerSec?: number }>(ns, DATA.hackStatus, {}).expectedPerSec ?? 0;
   const gangRate = (s.gang?.moneyRate ?? 0) * 5; // moneyGainRate is per 200 ms gang cycle
   const income = Math.max(m.short.income, m.long.income, gangRate + hackRate);

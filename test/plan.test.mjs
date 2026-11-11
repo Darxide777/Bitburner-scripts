@@ -174,7 +174,7 @@ test("installs when the next aug is far away relative to run time", () => {
   w.augs.HackA.repReq = 1e9; // ~27 hours of work away
   const p = plan(input(w, { sinceInstall: 60 * 60_000 }));
   assert.ok(p.install, "expected an install");
-  assert.match(p.install.reason, /next aug/);
+  assert.match(p.install.reason, /this run's/);
   // purchase order: most expensive first
   const prices = p.install.buy.map(([, a]) => w.augs[a].price);
   assert.deepEqual(prices, [...prices].sort((a, b) => b - a));
@@ -458,8 +458,29 @@ test("install timing: marginal value of waiting vs. recent runs' average rate", 
   assert.equal(p0.install, null, "waiting beats a poor history: keep going");
   const p1 = plan(input(installWorld(), { ...since, avgRunRate: 1e3 }));
   assert.ok(p1.install && p1.install.reason.startsWith("waiting earns"), p1.install?.reason);
-  // no history: the old patience rule (next aug 100 s away vs 0.5 × 1 h → no install)
-  assert.equal(plan(input(installWorld(), { ...since, avgRunRate: null })).install, null);
+  // no history: this run's own rate so far is the average to beat (Big, 100 s away, beats it)
+  const p2 = plan(input(installWorld(), { ...since, avgRunRate: null }));
+  assert.equal(p2.install, null);
+  assert.ok(p2.installRates.marginal > 0);
+});
+
+test("install timing without history: leaves once waiting earns less than the run so far", () => {
+  // BN12.27's first run sat 3.5 h on 14 ready augs: a junk aug's 4-minute money ETA kept the
+  // patience rule from firing while the best pending aug earned a third of the run's rate.
+  const w = installWorld();
+  w.augs.Big.repReq = 1e9; // days away
+  w.augs.Junk = aug({ repReq: 1, price: 1e15, factions: ["CyberSec"], stats: {} });
+  w.factions.CyberSec.augs.push("Junk");
+  const p = plan(input(w, { sinceInstall: 3600_000, avgRunRate: null, income: 1e15 }));
+  assert.ok(p.install, "expected an install");
+  assert.match(p.install.reason, /this run's/);
+});
+
+test("infra spending: no install before minRunMs, so an early run still spends", () => {
+  const early = plan(input(installWorld(), { sinceInstall: 5 * 60_000, avgRunRate: null }));
+  assert.ok(early.infraSpend > 0.3, `spend ${early.infraSpend}`);
+  const late = plan(input(installWorld(), { sinceInstall: 3600_000, avgRunRate: null }));
+  assert.ok(late.infraSpend < 0.1, `spend ${late.infraSpend}`);
 });
 
 function redPillWorld(over = {}) {

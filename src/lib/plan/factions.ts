@@ -716,6 +716,9 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
   const newAugs = chosen.size + data.queued.length;
   const since = input.sinceInstall;
   const valuablePending = pending.filter((p) => p.value > BASE_VALUE);
+  // value per second this run has earned so far: what an install right now would bank
+  const bankable = [...chosen, ...data.queued].filter((a) => a !== RED_PILL && a !== NFG && data.augs[a]);
+  const ownRate = since > 0 ? bankable.reduce((v, a) => v + value(a), 0) / (since / 1000) : 0;
   let reason = "";
   if (data.queued.includes(RED_PILL) || buyNow.length) reason = "The Red Pill";
   else if (newAugs > 0 && since >= cfg.minRunMs) {
@@ -738,7 +741,11 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
       if (input.avgRunRate != null) {
         if (marginal < input.avgRunRate)
           reason = `waiting earns ${perHour(marginal)}/h < recent runs' ${perHour(input.avgRunRate)}/h`;
-      } else if (nextEta > cfg.installPatience * since)
+      } else if (marginal < ownRate)
+        // no history yet (first runs of a BitNode): the average to beat is this run's own
+        // rate so far. Leaving when the marginal rate drops below it maximises value/time.
+        reason = `waiting earns ${perHour(marginal)}/h < this run's ${perHour(ownRate)}/h so far`;
+      else if (nextEta > cfg.installPatience * since)
         reason = `next aug in ${fmtS(nextEta / 1000)} > ${cfg.installPatience}× run time (${fmtS(since / 1000)})`;
     }
     else if (favorUnlock) reason = `installing unlocks donations at ${favorUnlock}`;
@@ -773,7 +780,11 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
   // using nextEta here made the budget collapse to 5% for hours while 0.5q sat idle.
   const redPillHold = redPillPush ? pending.find((c) => c.aug === RED_PILL) : null;
   const holdEta = redPillHold && Number.isFinite(redPillHold.eta) ? redPillHold.eta : cfg.maxRunMs;
-  const remaining = postRedPill ? cfg.maxRunMs : redPillPush ? holdEta : Number.isFinite(nextEta) ? nextEta : cfg.maxRunMs;
+  // No install happens before minRunMs, however close the next aug is: without this floor
+  // the budget fell to 5% minutes into a node (some cheap aug is always minutes away) and
+  // home RAM, which lasts the whole BitNode, sat at 128 GB next to $1b.
+  const untilInstall = Math.max(Number.isFinite(nextEta) ? nextEta : cfg.maxRunMs, cfg.minRunMs - since);
+  const remaining = postRedPill ? cfg.maxRunMs : redPillPush ? holdEta : untilInstall;
   const shareAll =
     data.node === 12 &&
     !!F.Daedalus?.joined &&
