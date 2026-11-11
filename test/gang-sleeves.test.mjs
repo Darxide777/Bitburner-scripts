@@ -68,37 +68,36 @@ test("sleeves do the crime with the most karma per second when there is no gang 
     sleeves: [sleeve(0), sleeve(1, { homicideChance: 0.2 }), sleeve(2, { homicideChance: 0.05, mugChance: 0.9 })],
     needKarma: true,
     targets: ["X"],
-    playerFaction: null,
   });
   assert.deepEqual(a, [{ kind: "crime", crime: "Homicide" }, { kind: "crime", crime: "Homicide" }, { kind: "crime", crime: "Mug" }]);
 });
 
-test("one sleeve per target faction, best sleeve each, never the player's faction", () => {
+test("one sleeve per target faction, including the player's faction", () => {
   const sleeves = [
-    sleeve(0, { gains: { A: { hacking: 5 }, B: { field: 1 } } }),
-    sleeve(1, { gains: { A: { hacking: 9 }, B: { field: 2, security: 3 } } }),
-    sleeve(2, { shock: 50, gains: { A: { hacking: 1 } } }),
+    sleeve(0, { gains: { P: { hacking: 5 }, A: { hacking: 1 } } }),
+    sleeve(1, { gains: { P: { hacking: 9 }, A: { hacking: 2 } } }),
+    sleeve(2, { shock: 50, gains: { P: { hacking: 1 } } }),
   ];
-  const a = decideSleeves({ sleeves, needKarma: false, targets: ["P", "A", "B"], playerFaction: "P" });
-  assert.deepEqual(a[1], { kind: "faction", faction: "A", type: "hacking" });
-  assert.deepEqual(a[0], { kind: "faction", faction: "B", type: "field" });
+  const a = decideSleeves({ sleeves, needKarma: false, targets: ["P", "A"] });
+  assert.deepEqual(a[1], { kind: "faction", faction: "P", type: "hacking" });
+  assert.deepEqual(a[0], { kind: "faction", faction: "A", type: "hacking" });
   assert.deepEqual(a[2], { kind: "recovery" }); // shocked leftover recovers
 });
 
 test("with a gang, spare sleeves build favor at other factions instead of doing crime", () => {
   const sleeves = [0, 1, 2].map((i) => sleeve(i, { gains: { A: { hacking: 3 }, F1: { field: 2 }, F2: { hacking: 1 } } }));
-  const a = decideSleeves({ sleeves, needKarma: false, targets: ["A"], favorTargets: ["F1", "F2"], playerFaction: null });
+  const a = decideSleeves({ sleeves, needKarma: false, targets: ["A"], favorTargets: ["F1", "F2"] });
   assert.deepEqual(a.map((x) => x.faction).sort(), ["A", "F1", "F2"]);
 });
 
 test("leftover sleeves pick the best-paying crime (Heist when it's likely to succeed)", () => {
   const sleeves = [sleeve(0, { heistChance: 0.8 }), sleeve(1, { heistChance: 0.1 })];
-  const a = decideSleeves({ sleeves, needKarma: false, targets: [], favorTargets: [], playerFaction: null });
+  const a = decideSleeves({ sleeves, needKarma: false, targets: [], favorTargets: [] });
   assert.deepEqual(a, [{ kind: "crime", crime: "Heist" }, { kind: "crime", crime: "Homicide" }]);
 });
 
 test("karma mode still uses Homicide even when Heist is available", () => {
-  const a = decideSleeves({ sleeves: [sleeve(0, { heistChance: 1 })], needKarma: true, targets: [], playerFaction: null });
+  const a = decideSleeves({ sleeves: [sleeve(0, { heistChance: 1 })], needKarma: true, targets: [] });
   assert.deepEqual(a, [{ kind: "crime", crime: "Homicide" }]);
 });
 
@@ -128,9 +127,9 @@ test("karma farming only when the gang is reachable within the run", () => {
 
 test("karma phase: one sleeve recovers, the rest farm karma; mode off disables it", () => {
   const sleeves = [0, 1, 2].map((i) => sleeve(i, { shock: 97 - i }));
-  const a = decideSleeves({ sleeves, needKarma: true, targets: [], playerFaction: null });
+  const a = decideSleeves({ sleeves, needKarma: true, targets: [] });
   assert.deepEqual(a.map((x) => x.kind), ["recovery", "crime", "crime"]);
-  const off = decideSleeves({ sleeves, needKarma: true, targets: [], playerFaction: null, recovery: { ...DEFAULT_RECOVERY, mode: "off" } });
+  const off = decideSleeves({ sleeves, needKarma: true, targets: [], recovery: { ...DEFAULT_RECOVERY, mode: "off" } });
   assert.ok(off.every((x) => x.kind === "crime"));
 });
 
@@ -143,7 +142,7 @@ test("Bladeburner contracts: after grind targets, before favor; one sleeve each,
     sleeve(3, { gains: { F: { hacking: 3 } }, bbChance: bbChance(0.1, 0.1) }),
   ];
   const a = decideSleeves({
-    sleeves, needKarma: false, targets: ["A"], favorTargets: ["F"], playerFaction: null,
+    sleeves, needKarma: false, targets: ["A"], favorTargets: ["F"],
     bladeburner: { contracts: ["Retirement", "Bounty Hunter"], minChance: 0.7 },
   });
   assert.equal(a[0].faction, "A"); // grind target first, even though it's the best Bladeburner

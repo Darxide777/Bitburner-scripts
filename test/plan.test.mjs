@@ -1,7 +1,7 @@
 // Planner unit tests (run against the compiled output: `npm test`).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { plan, escalatedCost, purchaseOrder, augValue, bestNfgFaction, expToLevel, routeWeights, DEFAULT_PLAN, DAEDALUS_AUGS, DAEDALUS_HACK } from "../dist/lib/plan/factions.js";
+import { plan, escalatedCost, purchaseOrder, augValue, bestNfgFaction, expToLevel, routeWeights, DEFAULT_PLAN, DAEDALUS_AUGS, DAEDALUS_HACK, DAEDALUS_MONEY, daedalusAugsRequired } from "../dist/lib/plan/factions.js";
 
 const fac = (o = {}) => ({
   joined: false, invited: false, rep: 0, favor: 0, favorGain: 0, enemies: [], workTypes: [],
@@ -469,6 +469,34 @@ function redPillWorld(over = {}) {
   return Object.assign(w, over);
 }
 
+test("Daedalus aug requirement comes from the game, with the BN12 fallback", () => {
+  const w = world({ sourceFiles: { 12: 25 } });
+  assert.equal(daedalusAugsRequired(w), 31, "BN12 scales 30 by 1.02^SF12");
+  w.factions.Daedalus = fac({
+    requirements: [{
+      type: "someCondition",
+      conditions: [
+        { type: "numAugmentations", numAugmentations: 32 },
+        { type: "numAugmentations", numAugmentations: 34 },
+      ],
+    }],
+  });
+  assert.equal(daedalusAugsRequired(w), 34, "the game's collected requirement wins");
+});
+
+test("BN12 Red Pill push waits for the game's actual Daedalus aug requirement", () => {
+  const since = { sinceInstall: 3600_000, avgRunRate: 1e3 };
+  const w = redPillWorld({ money: 1e6, hackLevel: 1000 });
+  w.factions.Daedalus = fac({ requirements: [{ type: "numAugmentations", numAugmentations: 31 }] });
+  const before = plan(input(w, since));
+  assert.equal(before.redPillPush, false, "30 installed is not enough when the game requires 31");
+  assert.equal(before.hackXp, null, "do not start the Daedalus XP farm early");
+  w.installed.push("Old31");
+  const after = plan(input(w, since));
+  assert.equal(after.redPillPush, true);
+  assert.deepEqual(after.hackXp, { level: DAEDALUS_HACK, why: "Daedalus" });
+});
+
 test("BN12 Red Pill push: hold installs, start Daedalus XP before the money gate", () => {
   const since = { sinceInstall: 3600_000, avgRunRate: 1e3 };
   const w = redPillWorld({ money: 1e6, hackLevel: 1000 });
@@ -493,6 +521,83 @@ test("BN12 Red Pill push: hold installs, start Daedalus XP before the money gate
   assert.equal(after.postRedPill, true);
   assert.ok(after.notes.some((n) => n.includes("w0r1d_d43m0n")), after.notes.join("; "));
   assert.ok(plan(input(done, since), { ...DEFAULT_PLAN, autoDestroy: false }).install, "autoDestroy off restores normal installs");
+});
+
+test("BN12 Red Pill push ignores the aug reserve and shares immediately", () => {
+  const since = { sinceInstall: 3600_000, avgRunRate: 1e3 };
+  const w = redPillWorld({ money: 1e6, hackLevel: DAEDALUS_HACK });
+  w.factions.Daedalus = fac({
+    joined: true, rep: 0, workTypes: ["hacking"], bestWork: "hacking", workRepPerSec: 10, augs: ["The Red Pill"],
+  });
+  w.augs["The Red Pill"] = aug({ price: 0, repReq: 3_600_000, factions: ["Daedalus"] });
+  const p = plan(input(w, since));
+  assert.equal(p.redPillPush, true);
+  assert.equal(p.augReserve, 0, "held augs are not going to be bought");
+  assert.equal(p.shareAll, true, "Red Pill rep is the bottleneck, not the held augs");
+  assert.equal(p.infraSpend, 1);
+  assert.equal(p.infraBudget, w.money);
+});
+
+test("BN12 Red Pill push also reserves the Daedalus invite until joined", () => {
+  const since = { sinceInstall: 3600_000, avgRunRate: 1e3 };
+  const w = redPillWorld({ money: 1e12, hackLevel: 1000 });
+  const before = plan(input(w, since));
+  assert.equal(before.redPillPush, true);
+  assert.equal(before.shareAll, false, "not sharing before Daedalus is joined");
+  assert.equal(before.infraReserve, DAEDALUS_MONEY, "keep the $100b invite in cash");
+
+  w.factions.Daedalus = fac({
+    joined: true, rep: 0, favor: 200, workTypes: ["hacking"], bestWork: "hacking", workRepPerSec: 10, augs: ["The Red Pill"],
+  });
+  w.augs["The Red Pill"] = aug({ price: 5e9, repReq: 1e6, factions: ["Daedalus"] });
+  const after = plan(input(w, since));
+  const donation = 1e6 / w.repPerDollar;
+  assert.equal(after.infraReserve, 5e9 + donation, "keep the Red Pill price and its donation");
+});
+
+test("BN12 Red Pill push reserves only The Red Pill's price and donation", () => {
+  const since = { sinceInstall: 3600_000, avgRunRate: 1e3 };
+  const w = redPillWorld({ money: 1e12, hackLevel: DAEDALUS_HACK });
+  w.factions.Daedalus = fac({
+    joined: true, rep: 0, favor: 200, workTypes: ["hacking"], bestWork: "hacking", workRepPerSec: 10, augs: ["The Red Pill"],
+  });
+  w.augs["The Red Pill"] = aug({ price: 1e9, repReq: 1e6, factions: ["Daedalus"] });
+  const p = plan(input(w, since));
+  const donation = (1e6 - 0) / w.repPerDollar;
+  assert.equal(p.redPillPush, true);
+  assert.equal(p.augReserve, 1e9 + donation, "price plus the Daedalus donation for its rep gap");
+  assert.equal(p.infraBudget, 0, "all cash on hand is still needed for the final install");
+});
+
+test("The final Red Pill install buys only The Red Pill", () => {
+  const since = { sinceInstall: 3600_000, avgRunRate: 1e3 };
+  const w = redPillWorld({ money: 1e15, hackLevel: DAEDALUS_HACK });
+  w.factions.Daedalus = fac({
+    joined: true, rep: 4e6, workTypes: ["hacking"], bestWork: "hacking", workRepPerSec: 10, augs: ["The Red Pill"],
+  });
+  w.augs["The Red Pill"] = aug({ price: 0, repReq: 4e6, factions: ["Daedalus"] });
+  const p = plan(input(w, since));
+  assert.ok(p.ready.some((c) => c.aug !== "The Red Pill"), "other augs are ready but must not be bought");
+  assert.equal(p.install?.reason, "The Red Pill");
+  assert.equal(p.install?.final, true);
+  assert.deepEqual(p.install?.buy, [["Daedalus", "The Red Pill"]]);
+  assert.deepEqual(p.install?.donate, []);
+});
+
+test("an affordable final Red Pill is not hidden by other ready augs", () => {
+  const since = { sinceInstall: 3600_000, avgRunRate: 1e3 };
+  const w = redPillWorld({ money: 2e9, hackLevel: DAEDALUS_HACK });
+  w.factions.Daedalus = fac({
+    joined: true, rep: 4e6, workTypes: ["hacking"], bestWork: "hacking", workRepPerSec: 10, augs: ["The Red Pill"],
+  });
+  w.augs["The Red Pill"] = aug({ price: 1e9, repReq: 4e6, factions: ["Daedalus"] });
+  // A ready aug the greedy pass buys first, so the escalated cost of both exceeds cash.
+  w.augs.Huge = aug({ price: 2e9, repReq: 1, factions: ["CyberSec"], stats: { faction_rep: 1e9 } });
+  w.factions.CyberSec.augs.push("Huge");
+  const p = plan(input(w, since));
+  assert.ok(p.ready.some((c) => c.aug === "Huge"), "the greedy pass still chooses Huge");
+  assert.equal(p.install?.reason, "The Red Pill");
+  assert.deepEqual(p.install?.buy, [["Daedalus", "The Red Pill"]]);
 });
 
 test("BN12 Red Pill push: infra budget follows The Red Pill ETA, not the next aug", () => {

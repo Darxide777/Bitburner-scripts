@@ -102,8 +102,8 @@ collects faction/aug state and the planner decides:
 - *travel / backdoor*: when a wanted faction is missing only a city or a backdoor, go get it.
 - *skill gates* (hacking, charisma, combat): a skill level that blocks something valuable — a faction
   invite, the easiest company job in a useful field, or w0r1d_d43m0n's hack level. In BN12 the
-  Daedalus hacking-2500 gate starts XP as soon as the 30-aug requirement is met, even before
-  $100b. Hacking: the manager puts `hackXpShare` (50%) of the pool on weaken for XP, rising to
+  Daedalus hacking-2500 gate starts XP as soon as its actual aug requirement is met
+  (30 + 1.02^SF12, capped at 40), even before $100b. Hacking: the manager puts `hackXpShare` (50%) of the pool on weaken for XP, rising to
   `hackXpShareMax` (90%) once money no longer gates Daedalus (weaken gives a hack's XP
   per thread and never touches money) on the server with the most XP per second, until the gate
   clears. Study (player time): XP still needed for the level — the game's skill formula inverted
@@ -129,19 +129,24 @@ collects faction/aug state and the planner decides:
   install event in `data/events.txt` bought), with at least `minAugsToInstall` new augs. Until 3
   runs can be valued, the old rule: next aug further away than `installPatience` × the run so far.
   Also when the run exceeds `maxRunMs`, or when installing would unlock donations at a faction
-  that takes them. In BN12, once Daedalus' 30-aug requirement is met, `pushRedPill` (default on)
+  that takes them. In BN12, once Daedalus' actual aug requirement is met, `pushRedPill` (default on)
   suppresses installs until The Red Pill; set it false to keep the normal cadence. The push is
   capped by `pushRedPillMaxMs` (48h) so a stalled XP farm cannot hold the run forever.
   After The Red Pill, `autoDestroy` holds all further installs until w0r1d_d43m0n: an install
   would reset the hack level needed to destroy it. `plan.installRates` shows both rates.
-  Leftover money goes to home RAM, then NeuroFlux levels.
+  The final Red Pill install buys only The Red Pill: other ready augs wait for nothing, and
+  NeuroFlux levels are skipped because they die with the BitNode. Leftover money still goes to
+  home RAM first, which persists and helps the w0r1d_d43m0n hack.
 - *infra spend*: the economy module's budget tapers from 50% to 5% as install approaches,
   because cloud servers are wiped on install. During the Red Pill push it follows The Red
   Pill's ETA instead of the next aug's, and after The Red Pill it opens to 50% because the
   only remaining goal is the final hack-level grind. In *share-only* mode the planner keeps
-  `augReserve` (the escalated cost of every wanted aug plus donations) in cash and spends the
-  rest: 75% on cloud servers, 25% on hacknet RAM/new servers. Both are RAM for `share()`;
-  hacknet levels/cores are skipped because they add hashes, not threads.
+  `augReserve` in cash and spends the rest on RAM. During the Red Pill push that reserve is
+  The Red Pill's price plus any Daedalus donation for its rep gap, plus the $100b invite until
+  Daedalus is joined. Other augs, installs, grafts, sleeve augs, gang equipment, stock-market
+  access, hacknet production, corporation creation and NeuroFlux are all held. The economy module reserves 25% for hacknet RAM, then lets any cloud/home
+  budget it cannot use (shrinking cloud caps) spill into hacknet too; both are RAM for
+  `share()`, while hacknet levels/cores are skipped because they add hashes, not threads.
 - *destroy*: with The Red Pill installed and the hack level reached, destroy w0r1d_d43m0n
   and start the next BN12.
 
@@ -171,8 +176,9 @@ least, so benching it costs least) and hands over once another sleeve is 5 point
 With no gang yet, the others commit the crime with the most expected karma per second (karma is
 only granted on success: Homicide 3 per 3 s vs Mug 0.25 per 4 s, so Homicide wins above ~6% of
 Mug's success chance), which
-minimizes time-to-gang. Otherwise each grindable faction gets its best-suited sleeve, never the
-faction the player is working for; then Bladeburner contracts (one sleeve per contract, ≥70%
+minimizes time-to-gang. Otherwise each grindable faction gets its best-suited sleeve, including
+the faction the player is working for (the game only forbids two sleeves on one faction); then
+Bladeburner contracts (one sleeve per contract, ≥70%
 success) while in the division with black ops left; then favor building; leftovers do crime.
 Cheap sleeve augs are bought as shock reaches 0.
 

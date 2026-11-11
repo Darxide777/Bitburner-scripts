@@ -265,8 +265,13 @@ export async function main(ns: NS): Promise<void> {
     // ---- stocks: keep the planner's infra share in cash, pause while the casino bets ----
     if (cfg.manageStocks) {
       const casinoBetting = ns.isRunning(SCRIPTS.casinoTable, "home");
+      const reserveCash = !!current?.shareAll || !!current?.redPillPush;
       const reserveFrac = Math.max(DEFAULT_STOCKS.reserveFrac, current?.infraSpend ?? 0);
-      const ctl: StocksControl = { trade: !casinoBetting, accessBudgetFrac: cfg.stocksAccessBudgetFrac, cfg: { reserveFrac, ...cfg.stocks } };
+      const ctl: StocksControl = {
+        trade: !casinoBetting,
+        accessBudgetFrac: reserveCash ? 0 : cfg.stocksAccessBudgetFrac,
+        cfg: { reserveFrac, ...cfg.stocks },
+      };
       writeJson(ns, DATA.stocksConfig, ctl);
       if (!ns.isRunning(SCRIPTS.stocksManager, "home") && ns.getServerMaxRam("home") >= cfg.stocksMinHomeGB && ns.exec(SCRIPTS.stocksManager, "home"))
         event("stocks", "started stock manager");
@@ -277,13 +282,18 @@ export async function main(ns: NS): Promise<void> {
     const hashServers = !!s && ((s.sourceFiles["9"] ?? 0) > 0 || s.node === 9);
     if (cfg.manageHacknet && hashServers) {
       const ctl: HacknetControl = {
-        buy: !ns.isRunning(SCRIPTS.casinoTable, "home"),
+        buy: !ns.isRunning(SCRIPTS.casinoTable, "home") && !current?.redPillPush,
         cfg: { budgetFrac: Math.max(0.05, current?.infraSpend ?? 0.25), ...cfg.hacknet },
       };
       if (current?.shareAll) {
         ctl.reserve = current.augReserve;
         ctl.shareRam = true;
-        if (cfg.infraSpend == null) ctl.budget = Math.max(0, current.infraBudget) * 0.25;
+        // share-only spending is centralised in economy.js so left-over cloud budget
+        // can spill into hacknet RAM without two scripts racing for the same cash
+        if (cfg.infraSpend == null) {
+          ctl.buy = false;
+          ctl.budget = 0;
+        }
       }
       writeJson(ns, DATA.hacknetConfig, ctl);
       if (!ns.isRunning(SCRIPTS.hacknetManager, "home") && ns.exec(SCRIPTS.hacknetManager, "home")) event("hacknet", "started hacknet manager");
@@ -297,7 +307,8 @@ export async function main(ns: NS): Promise<void> {
       const gaps = (current?.pending ?? []).filter((c) => c.repGap > 0 && c.donation === 0 && workableFactions.has(c.faction));
       const gap = gaps.find((c) => c.faction === current?.work?.faction) ?? [...gaps].sort((a, b) => b.repGap - a.repGap)[0];
       const ctl: CorpControl = {
-        allowCreate: !ns.isRunning(SCRIPTS.casinoTable, "home"),
+        // creating a corporation costs $150b: never while the Red Pill is the goal
+        allowCreate: !ns.isRunning(SCRIPTS.casinoTable, "home") && !current?.shareAll && !current?.redPillPush,
         bribeTarget: gap ? { faction: gap.faction, repGap: gap.repGap } : null,
         cfg: cfg.corp,
       };
@@ -401,13 +412,16 @@ export async function main(ns: NS): Promise<void> {
     // ---- economy (frozen while casino.js bets: spending would make the game reject a bet) ----
     if (s && Date.now() - lastEconomy > cfg.economyEveryMs && !ns.isRunning(SCRIPTS.casinoTable, "home")) {
       lastEconomy = Date.now();
-      // Share-only: 75% of the surplus above the aug reserve goes to cloud servers,
-      // 25% is written to the hacknet controller below.
-      const shareBudget = cfg.infraSpend == null && current?.shareAll ? Math.max(0, current.infraBudget) * 0.75 : null;
+      // Share-only: economy.js gets the whole surplus above the aug reserve. It keeps
+      // 25% for hacknet RAM and lets any cloud/home budget it cannot use spill there too,
+      // so shrinking cloud caps no longer leave cash idle.
+      const shareAll = cfg.infraSpend == null && current?.shareAll === true;
       const spend = cfg.infraSpend ?? current?.infraSpend ?? 0.5;
-      const budget = shareBudget ?? s.money * spend;
-      const reserve = shareBudget == null ? 0 : current?.augReserve ?? 0;
-      const r = await runTask<string[]>(ns, "tasks/economy.js", [budget, reserve]);
+      const budget = shareAll ? Math.max(0, current?.infraBudget ?? 0) : s.money * spend;
+      const reserve = current?.infraReserve ?? 0;
+      const args: (string | number)[] = [budget, reserve];
+      if (shareAll) args.push(0.25);
+      const r = await runTask<string[]>(ns, "tasks/economy.js", args);
       if (r.ok) for (const a of r.value ?? []) event("buy", a);
       else if (r.reason !== "ram") event("error", `economy failed: ${r.error}`);
     }
@@ -670,8 +684,9 @@ async function gangModule(
   const left = expectedRunMs(runs, 30 * 60_000) - sinceInstallMs;
   const installInSec = p.install ? 0 : left > 0 ? left / 1000 : undefined;
   const gcfg: Partial<GangConfig> = { mode: needRep ? "respect" : "money", installInSec, ...dcfg.gang };
-  // no equipment shopping while casino.js is betting (it needs the money to stay put)
-  if (ns.isRunning(SCRIPTS.casinoTable, "home")) Object.assign(gcfg, { equipBudget: 0, augBudget: 0 });
+  // no equipment shopping while casino.js is betting or cash is reserved for RAM/The Red Pill
+  if (ns.isRunning(SCRIPTS.casinoTable, "home") || p.shareAll || p.redPillPush)
+    Object.assign(gcfg, { equipBudget: 0, augBudget: 0 });
   writeJson(ns, DATA.gangConfig, gcfg);
   if (!ns.isRunning(SCRIPTS.gangManager, "home") && ns.exec(SCRIPTS.gangManager, "home"))
     event("gang", `started gang manager (${gcfg.mode} mode)`);
@@ -763,7 +778,7 @@ async function graftingModule(
         { ...gcfg, moneyReserve: reserve },
         {
           money: cash,
-          installPlanned: !!p.install || p.redPillPush || p.postRedPill,
+          installPlanned: !!p.install || p.shareAll || p.redPillPush || p.postRedPill,
           owned: data.installed,
           queued: data.queued,
         },
@@ -1035,7 +1050,7 @@ async function factionsModule(
   workableFactions = new Set(Object.keys(data.factions).filter((f) => data.factions[f].workTypes.length > 0));
   noteMilestones(ns, data, s, event);
 
-  // sleeves first, so none of them is sitting on the faction the player is about to work for
+  // sleeves first: the game allows one sleeve alongside the player on the same faction
   if (dcfg.manageSleeves && s.sleeves > 0) {
     try {
       const targets = p.grindFactions;
@@ -1057,9 +1072,8 @@ async function factionsModule(
         data,
         targets,
         p.favorFactions,
-        act.work?.faction ?? null,
         needKarma,
-        busy ? 0 : undefined, // no sleeve aug purchases while casino.js is betting or a graft owns the player
+        busy || p.shareAll || p.redPillPush ? 0 : undefined, // no sleeve augs while cash is reserved for RAM/The Red Pill
         {
           recovery: { ...DEFAULT_RECOVERY, ...dcfg.sleeveRecovery },
           bladeburner: bbInDivision && readJson<Partial<BladeburnerStatus>>(ns, DATA.bladeburner, {}).blackOpsDone !== true,

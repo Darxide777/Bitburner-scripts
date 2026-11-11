@@ -101,7 +101,7 @@ export async function main(ns: NS): Promise<void> {
     status.access = { wse, tix, api4s: api };
     // the stock page's own 4S view (forecasts in the UI): scripts don't need it, but once it's
     // pocket change it lets you see what the trader sees
-    if (api && !S.has4SData() && C.MarketData4SCost <= cash() * 0.01 && ctl.trade && S.purchase4SMarketData())
+    if (api && frac > 0 && !S.has4SData() && C.MarketData4SCost <= cash() * 0.01 && ctl.trade && S.purchase4SMarketData())
       appendJsonl(ns, DATA.events, { t: Date.now(), kind: "stocks", msg: "bought 4S Market Data (forecasts on the stock page)" });
     const preCfg: PreConfig = { ...DEFAULT_PRE, ...ctl.preCfg };
     const preOn = ctl.pre4s !== false;

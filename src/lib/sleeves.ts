@@ -60,8 +60,7 @@ function normalise(t: SleeveTask | null): Assignment | null {
 }
 
 /**
- * Plan and apply sleeve tasks. `targets` = factions to grind in priority order;
- * `playerFaction` = the faction the player will work for (sleeves must avoid it).
+ * Plan and apply sleeve tasks. `targets` = factions to grind in priority order.
  * `augBudget` = fraction of money a single sleeve aug may cost.
  */
 export async function manageSleeves(
@@ -69,7 +68,6 @@ export async function manageSleeves(
   data: FactionData,
   targets: string[],
   favorTargets: string[],
-  playerFaction: string | null,
   needKarma: boolean,
   augBudget = 0.001,
   opts: SleeveOptions = {},
@@ -131,7 +129,6 @@ export async function manageSleeves(
     needKarma,
     targets,
     favorTargets,
-    playerFaction,
     recovery: opts.recovery,
     bladeburner: contracts.length ? { contracts, minChance: opts.bbMinChance ?? 0.7 } : null,
   });

@@ -219,7 +219,7 @@ export async function main(ns: NS): Promise<void> {
       return true;
     };
 
-    if (!ctl.buy) status.note = "not buying (casino running)";
+    if (!ctl.buy) status.note = ctl.shareRam ? "not buying: economy.js is buying share RAM" : "not buying (cash reserved)";
     else if (!ctl.shareRam && !ns.fileExists("Formulas.exe", "home")) status.note = "no Formulas.exe: not buying production yet";
     else if (ctl.shareRam) {
       status.note = "share-only: buying RAM/servers for share()";

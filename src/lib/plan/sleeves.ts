@@ -4,8 +4,8 @@
 //     sleeve commits Homicide (the fastest karma), or Mug while Homicide would mostly
 //     fail → shortest time to gang. An unreachable gang is ignored: sleeves earn rep.
 //   otherwise: one sleeve per faction we still need rep at (best sleeve for each, in
-//     the planner's priority order), never the faction the player is working for
-//     (the game doesn't allow two workers on one faction)
+//     the planner's priority order). This includes the faction the player is working
+//     for: the game only forbids two sleeves on one faction.
 //   recovery rotation (default 1 slot): the most-shocked sleeve recovers — it produces the
 //     least while shocked, so benching it costs the least — and hands over once another
 //     sleeve is `margin` shock points worse (or it's done). data/sleeves.txt logs the
@@ -62,7 +62,6 @@ export interface SleeveInput {
   targets: string[];
   /** lower-priority factions for spare sleeves (rep → favor) */
   favorTargets?: string[];
-  playerFaction: string | null;
   recovery?: RecoveryConfig;
   /** set while sleeves should help Bladeburner (in the division, black ops left) */
   bladeburner?: BladeburnerSleeveInput | null;
@@ -126,7 +125,7 @@ export function decideSleeves(input: SleeveInput): Assignment[] {
 
   const assignFactions = (list: string[]) => {
     for (const f of list) {
-      if (f === input.playerFaction || !free.size) continue;
+      if (!free.size) continue;
       let bestIdx = -1;
       let bestType = "";
       let bestGain = 0;

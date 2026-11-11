@@ -11,14 +11,36 @@
 // Money is NOT spent on augs during a run: every purchase multiplies the price of
 // all remaining augs by ~1.9, so buying everything at install time, most
 // expensive first, is the cheapest order. The Red Pill is the exception.
+import type { PlayerRequirement } from "@ns";
 import type { FactionData, FactionInfo } from "./data.js";
 import { NFG, RED_PILL, SKIP_FACTIONS } from "./data.js";
 
 const BLADEBURNERS = "Bladeburners";
-/** Daedalus invite: 30 augs, $100b, and hacking 2500 (or combat 1500). */
+/** Base Daedalus aug requirement; BN12 scales it (see `daedalusAugsRequired`). */
 export const DAEDALUS_AUGS = 30;
 export const DAEDALUS_MONEY = 100e9;
 export const DAEDALUS_HACK = 2500;
+
+function augCountRequirements(reqs: PlayerRequirement[]): number[] {
+  const out: number[] = [];
+  for (const r of reqs) {
+    if (r.type === "numAugmentations") out.push(r.numAugmentations);
+    else if (r.type === "someCondition" || r.type === "everyCondition") out.push(...augCountRequirements(r.conditions));
+    else if (r.type === "not") out.push(...augCountRequirements([r.condition]));
+  }
+  return out;
+}
+
+/** The game's actual Daedalus aug gate: 30 in other nodes, 30 + 1.02^SF12 (capped at 40) in BN12. */
+export function daedalusAugsRequired(data: FactionData): number {
+  const counts = augCountRequirements(data.factions.Daedalus?.requirements ?? []);
+  if (counts.length) return Math.max(...counts);
+  // Requirements are only collected before joining; while joined the exact value no longer matters.
+  const sf = data.sourceFiles["12"];
+  return data.node === 12 && sf != null
+    ? Math.floor(Math.min(DAEDALUS_AUGS + Math.pow(1.02, sf), 40))
+    : DAEDALUS_AUGS;
+}
 /** every combat stat must reach this to join the Bladeburner division */
 const BB_JOIN_STAT = 100;
 const GYM_STAT = { strength: "str", defense: "def", dexterity: "dex", agility: "agi" } as const;
@@ -32,7 +54,7 @@ export interface PlanConfig {
   /** Minimum new augs (bought + queued) before an ETA-based install. */
   minAugsToInstall: number;
   autoInstall: boolean;
-  /** BN12: once Daedalus' 30-aug requirement is met, hold installs until The Red Pill. */
+  /** BN12: once Daedalus' aug requirement is met, hold installs until The Red Pill. */
   pushRedPill: boolean;
   /** Safety cap on pushRedPill: after this long without The Red Pill, allow normal installs again. */
   pushRedPillMaxMs: number;
@@ -138,7 +160,8 @@ export interface Plan {
   /** Fallback activity when there is nothing to grind rep for. */
   crime: string | null;
   buyNow: [string, string][];
-  install: null | { reason: string; buy: [string, string][]; donate: [string, number][] };
+  /** `final`: the Red Pill install — buy only The Red Pill, never other augs or NFG. */
+  install: null | { reason: string; buy: [string, string][]; donate: [string, number][]; final?: boolean };
   destroy: boolean;
   /** BN12: holding installs to reach The Red Pill (see pushRedPill). */
   redPillPush: boolean;
@@ -192,6 +215,8 @@ export interface Plan {
   augReserve: number;
   /** Absolute $ the infra modules may spend; excludes `augReserve` in share-only mode. */
   infraBudget: number;
+  /** Cash the economy module must leave untouched (Daedalus invite and/or the final Red Pill). */
+  infraReserve: number;
   notes: string[];
 }
 
@@ -309,6 +334,17 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
   const notes: string[] = [];
   const owned = new Set([...data.installed, ...data.queued]);
   const F = data.factions;
+  const daedalusAugs = daedalusAugsRequired(data);
+  // A Red Pill run is worth more than any aug install: once the actual Daedalus aug
+  // requirement is met, keep the run alive until The Red Pill (or maxRunMs, if off).
+  const redPillEligible =
+    cfg.pushRedPill &&
+    data.node === 12 &&
+    !data.installed.includes(RED_PILL) &&
+    !!F.Daedalus &&
+    data.installed.length >= daedalusAugs;
+  // The push has a safety cap: if XP stalls, do not hold the run forever.
+  const redPillPush = redPillEligible && input.sinceInstall < cfg.pushRedPillMaxMs;
   const usable = (f: string) => !SKIP_FACTIONS.includes(f);
   const weights = routeWeights(data, cfg.weights);
   const value = (a: string) =>
@@ -372,6 +408,7 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     });
   }
   const byAug = new Map(candidates.map((c) => [c.aug, c]));
+  const redPill = byAug.get(RED_PILL);
   const prereqsOk = (a: string, set: Set<string>) => data.augs[a].prereqs.every((p) => owned.has(p) || set.has(p));
 
   // ---------- what could we buy right now? (greedy by value, escalation-aware) ----------
@@ -393,6 +430,10 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
       donations += c.donation;
     }
   }
+  // During the push only The Red Pill is actually bought, so other ready augs must not
+  // hide an affordable Red Pill from the final install through the combined escalation cost.
+  if (redPillPush && redPill && !chosen.has(RED_PILL) && (redPill.repGap === 0 || redPill.donation > 0) && redPill.price + redPill.donation <= data.money)
+    chosen.add(RED_PILL);
   const order = purchaseOrder([...chosen], data);
   const ready = order.map((a) => byAug.get(a)!);
 
@@ -416,8 +457,12 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
   const repBound = !moneyBound && pending.some((c) => c.repGap > 0 && c.donation === 0);
   // Turning hacking off is only safe if the cash on hand still buys every wanted aug
   // and pays every planned donation; otherwise the next one becomes unaffordable.
-  const augReserve =
-    escalatedCost(candidates.map((c) => c.price), data.priceMult) + candidates.reduce((s, c) => s + c.donation, 0);
+  // During a Red Pill push the final install buys only The Red Pill, so the only cash
+  // that must stay untouched is its price plus any donation for its rep gap (and the
+  // $100b Daedalus invite until joined). Grafts/installs/NFG are all held.
+  const augReserve = redPillPush
+    ? (F.Daedalus?.joined ? 0 : DAEDALUS_MONEY) + (redPill?.price ?? 0) + (redPill?.donation ?? 0)
+    : escalatedCost(candidates.map((c) => c.price), data.priceMult) + candidates.reduce((s, c) => s + c.donation, 0);
   const moneyDone = !moneyBound && data.money >= augReserve;
 
   // requirement context (company rep included: company work can earn it)
@@ -530,14 +575,14 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     : null;
   // Daedalus' 2500 hacking gate is the long pole in a BN12 Red Pill run. The generic
   // skill-gate scan only adds it once money/augs are met, but money arrives in minutes
-  // while the hacking level does not: start farming XP as soon as the 30-aug gate is met.
+  // while the hacking level does not: start farming XP as soon as the aug gate is met.
   const daedalusXp =
     cfg.skillWork &&
     data.node === 12 &&
     !data.installed.includes(RED_PILL) &&
     !!F.Daedalus &&
     !F.Daedalus.joined &&
-    data.installed.length >= DAEDALUS_AUGS &&
+    data.installed.length >= daedalusAugs &&
     data.hackLevel < DAEDALUS_HACK
       ? { level: DAEDALUS_HACK, why: "Daedalus" }
       : null;
@@ -646,7 +691,6 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
 
   // ---------- The Red Pill / destroy ----------
   const buyNow: [string, string][] = [];
-  const redPill = byAug.get(RED_PILL);
   if (redPill && chosen.has(RED_PILL)) buyNow.push([redPill.faction, RED_PILL]);
   const destroy =
     cfg.autoDestroy &&
@@ -665,16 +709,6 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
 
   // ---------- install decision ----------
   let install: Plan["install"] = null;
-  // A Red Pill run is worth more than any aug install: once Daedalus' 30-aug requirement
-  // is met, keep the run alive until The Red Pill (or maxRunMs, if pushRedPill is off).
-  // The push has a safety cap: if XP stalls, do not hold the run forever.
-  const redPillEligible =
-    cfg.pushRedPill &&
-    data.node === 12 &&
-    !data.installed.includes(RED_PILL) &&
-    !!F.Daedalus &&
-    data.installed.length >= DAEDALUS_AUGS;
-  const redPillPush = redPillEligible && input.sinceInstall < cfg.pushRedPillMaxMs;
   if (redPillPush) notes.push("Red Pill push: holding installs until The Red Pill");
   else if (redPillEligible) notes.push(`Red Pill push cap (${fmtS(cfg.pushRedPillMaxMs / 1000)}) reached: allowing installs`);
   // value per second of waiting for the best pending aug (what staying in this run earns)
@@ -717,10 +751,20 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     reason = "";
   }
   if (reason && cfg.autoInstall) {
+    const final = reason === "The Red Pill";
     install = {
       reason,
-      buy: order.map((a) => [byAug.get(a)!.faction, a] as [string, string]),
-      donate: ready.filter((c) => c.donation > 0).map((c) => [c.faction, c.donation] as [string, number]),
+      buy: final
+        ? redPill && chosen.has(RED_PILL)
+          ? [[redPill.faction, RED_PILL]]
+          : []
+        : order.map((a) => [byAug.get(a)!.faction, a] as [string, string]),
+      donate: final
+        ? redPill && chosen.has(RED_PILL) && redPill.donation > 0
+          ? [[redPill.faction, redPill.donation]]
+          : []
+        : ready.filter((c) => c.donation > 0).map((c) => [c.faction, c.donation] as [string, number]),
+      final,
     };
   }
 
@@ -734,9 +778,9 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     data.node === 12 &&
     !!F.Daedalus?.joined &&
     !data.installed.includes(RED_PILL) &&
-    moneyDone &&
-    repBound &&
-    hackXp === null;
+    !install &&
+    hackXp === null &&
+    (redPillPush || (moneyDone && repBound));
   // Share-only mode spends the cash above `augReserve` on more RAM; keeping the normal
   // fraction would leave most of the surplus idle. Stocks hold all cash meanwhile.
   const infraSpend = shareAll
@@ -745,6 +789,7 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
       ? 0.5
       : Math.min(0.5, Math.max(0.05, (0.5 * remaining) / (remaining + since + 1)));
   const infraBudget = shareAll ? Math.max(0, data.money - augReserve) : data.money * infraSpend;
+  const infraReserve = shareAll || redPillPush ? augReserve : 0;
 
   return {
     join,
@@ -768,6 +813,7 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     train,
     worldDaemon: { redPill: data.installed.includes(RED_PILL), ...data.worldDaemon, hackLevel: data.hackLevel },
     infraSpend,
+    infraReserve,
     ready,
     readyCost: readyCost + donations,
     pending: pending.slice(0, 8),
