@@ -569,7 +569,7 @@ test("BN12 Red Pill push reserves only The Red Pill's price and donation", () =>
   assert.equal(p.infraBudget, 0, "all cash on hand is still needed for the final install");
 });
 
-test("The final Red Pill install buys only The Red Pill", () => {
+test("The final Red Pill plan queues only The Red Pill (install.ts adds NFG)", () => {
   const since = { sinceInstall: 3600_000, avgRunRate: 1e3 };
   const w = redPillWorld({ money: 1e15, hackLevel: DAEDALUS_HACK });
   w.factions.Daedalus = fac({

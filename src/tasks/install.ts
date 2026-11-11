@@ -4,8 +4,9 @@
 // Order: donations needed for planned augs → planned augs (already in the
 // cheapest order) → home RAM (persists within the BitNode) → NeuroFlux Governor
 // levels with whatever is left (donating for its rep where possible) → install.
-// A `final` install is The Red Pill: buy only it, and skip NeuroFlux, which is lost
-// with the BitNode. Home RAM is kept because it persists and helps the w0r1d hack.
+// A `final` install is The Red Pill: buy it first, then dump the surplus into
+// NeuroFlux Governor (home RAM only gets what NFG cannot use). Those NFG levels
+// still apply to the final w0r1d hack.
 import type { FactionName, NS } from "@ns";
 import { appendJsonl, writeJson } from "../lib/io.js";
 import { NFG, RED_PILL } from "../lib/plan/data.js";
@@ -15,7 +16,7 @@ interface InstallArgs {
   reason: string;
   buy: [string, string][];
   donate: [string, number][];
-  /** The Red Pill install: buy nothing else and skip NeuroFlux. */
+  /** The Red Pill install: buy it first, then spend all remaining cash on NeuroFlux. */
   final?: boolean;
 }
 
@@ -44,30 +45,52 @@ export async function main(ns: NS): Promise<void> {
   const planned = final ? a.buy.filter(([, aug]) => aug === RED_PILL) : a.buy;
   for (const [f, aug] of planned) if (sing.purchaseAugmentation(f as FactionName, aug)) bought.push(aug);
 
-  for (let i = 0; i < 20; i++) {
-    const c = sing.getUpgradeHomeRamCost();
-    if (c > money() || !sing.upgradeHomeRam()) break;
+  if (final) {
+    const owned = sing.getOwnedAugmentations(true);
+    const installed = sing.getOwnedAugmentations(false);
+    // Do not spend optional cash if the Red Pill purchase failed, or if it is already
+    // installed and this final install would only waste a reset.
+    if (installed.includes(RED_PILL) || !owned.includes(RED_PILL)) return;
   }
 
-  // NeuroFlux: from the joined faction with the most rep. Never on the final Red Pill
-  // install: those levels die with the BitNode and only delay the install.
-  const factions = final ? [] : ns.getPlayer().factions.filter((f) => sing.getAugmentationsFromFaction(f).includes(NFG));
+  const upgradeHomeRam = () => {
+    for (let i = 0; i < 20; i++) {
+      const c = sing.getUpgradeHomeRamCost();
+      if (c > money() || !sing.upgradeHomeRam()) break;
+    }
+  };
+
+  // NeuroFlux: from the joined faction with the most rep. On the final Red Pill install
+  // this is where every remaining dollar goes; the levels still help the w0r1d hack.
+  const factions = ns.getPlayer().factions.filter((f) => sing.getAugmentationsFromFaction(f).includes(NFG));
   let nfg = 0;
   const canDonate = (f: string) => sing.getFactionFavor(f as FactionName) >= ns.getFavorToDonate();
   const repPerDollar = ns.fileExists("Formulas.exe", "home")
     ? ns.formulas.reputation.repFromDonation(1e9, ns.getPlayer()) / 1e9
     : 0;
-  for (let i = 0; i < 200 && factions.length; i++) {
-    const f = factions.sort((x, y) => sing.getFactionRep(y) - sing.getFactionRep(x))[0] as FactionName;
-    const price = sing.getAugmentationPrice(NFG);
-    if (price > money()) break;
-    const gap = sing.getAugmentationRepReq(NFG) - sing.getFactionRep(f);
-    if (gap > 0) {
-      const donation = canDonate(f) && repPerDollar > 0 ? gap / repPerDollar : Infinity;
-      if (donation + price > money() || !sing.donateToFaction(f, donation)) break;
+  const buyNfg = () => {
+    for (let i = 0; i < 200 && factions.length; i++) {
+      const f = factions.sort((x, y) => sing.getFactionRep(y) - sing.getFactionRep(x))[0] as FactionName;
+      const price = sing.getAugmentationPrice(NFG);
+      if (price > money()) break;
+      const gap = sing.getAugmentationRepReq(NFG) - sing.getFactionRep(f);
+      if (gap > 0) {
+        const donation = canDonate(f) && repPerDollar > 0 ? gap / repPerDollar : Infinity;
+        if (donation + price > money() || !sing.donateToFaction(f, donation)) break;
+      }
+      if (!sing.purchaseAugmentation(f, NFG)) break;
+      nfg++;
     }
-    if (!sing.purchaseAugmentation(f, NFG)) break;
-    nfg++;
+  };
+
+  // A final install has no future run: dump the surplus into NFG first. Home RAM only
+  // gets whatever the NFG price/rep ladder leaves behind.
+  if (final) {
+    buyNfg();
+    upgradeHomeRam();
+  } else {
+    upgradeHomeRam();
+    buyNfg();
   }
 
   const queued = sing.getOwnedAugmentations(true).length - sing.getOwnedAugmentations(false).length;

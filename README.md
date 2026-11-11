@@ -134,9 +134,10 @@ collects faction/aug state and the planner decides:
   capped by `pushRedPillMaxMs` (48h) so a stalled XP farm cannot hold the run forever.
   After The Red Pill, `autoDestroy` holds all further installs until w0r1d_d43m0n: an install
   would reset the hack level needed to destroy it. `plan.installRates` shows both rates.
-  The final Red Pill install buys only The Red Pill: other ready augs wait for nothing, and
-  NeuroFlux levels are skipped because they die with the BitNode. Leftover money still goes to
-  home RAM first, which persists and helps the w0r1d_d43m0n hack.
+  The final Red Pill install buys The Red Pill first, then spends every remaining dollar
+  on NeuroFlux Governor levels; those levels still help the final w0r1d_d43m0n hack. Home
+  RAM only gets whatever the NFG price/rep ladder leaves behind, and other ready augs are
+  not queued for this install.
 - *infra spend*: the economy module's budget tapers from 50% to 5% as install approaches,
   because cloud servers are wiped on install. During the Red Pill push it follows The Red
   Pill's ETA instead of the next aug's, and after The Red Pill it opens to 50% because the

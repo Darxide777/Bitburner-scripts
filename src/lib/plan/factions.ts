@@ -160,7 +160,7 @@ export interface Plan {
   /** Fallback activity when there is nothing to grind rep for. */
   crime: string | null;
   buyNow: [string, string][];
-  /** `final`: the Red Pill install — buy only The Red Pill, never other augs or NFG. */
+  /** `final`: the Red Pill install — buy only The Red Pill here; install.ts spends the rest on NFG. */
   install: null | { reason: string; buy: [string, string][]; donate: [string, number][]; final?: boolean };
   destroy: boolean;
   /** BN12: holding installs to reach The Red Pill (see pushRedPill). */
