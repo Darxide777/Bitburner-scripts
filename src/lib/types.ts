@@ -34,6 +34,18 @@ export interface Snapshot {
   sleeves: number;
 }
 
+/** What tasks/graft.js is doing, for the daemon dashboard and diagnostics. */
+export interface GraftState {
+  t: number;
+  aug: string;
+  status: "starting" | "grafting" | "done" | "cancelled" | "failed";
+  started?: number;
+  ended?: number;
+  city?: string;
+  owned?: boolean;
+  error?: string;
+}
+
 /** Income categories of MoneySource (everything else is spending). */
 export const INCOME_KEYS = [
   "hacking",

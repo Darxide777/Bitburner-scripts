@@ -140,6 +140,10 @@ export interface Plan {
   buyNow: [string, string][];
   install: null | { reason: string; buy: [string, string][]; donate: [string, number][] };
   destroy: boolean;
+  /** BN12: holding installs to reach The Red Pill (see pushRedPill). */
+  redPillPush: boolean;
+  /** BN12: The Red Pill is installed and autoDestroy is on; no more installs before w0r1d_d43m0n. */
+  postRedPill: boolean;
   /** Bladeburner actions may use the player's time (always with The Blade's Simulacrum). */
   bladeburner: boolean;
   /** Company work to earn an invite (megacorp factions): the job to work and why. */
@@ -633,6 +637,14 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     data.worldDaemon.rooted &&
     data.hackLevel >= data.worldDaemon.reqHack;
 
+  // After The Red Pill the run is over except for the hack level: installing would reset
+  // that level (and the run) for no benefit, so hold every install until w0r1d_d43m0n.
+  const postRedPill =
+    cfg.autoDestroy &&
+    data.node === 12 &&
+    data.installed.includes(RED_PILL) &&
+    !destroy;
+
   // ---------- install decision ----------
   let install: Plan["install"] = null;
   // A Red Pill run is worth more than any aug install: once Daedalus' 30-aug requirement
@@ -682,6 +694,9 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
   if (redPillPush && reason && reason !== "The Red Pill") {
     notes.push(`holding install (${reason}) until The Red Pill`);
     reason = "";
+  } else if (postRedPill && reason) {
+    notes.push(`holding install (${reason}) until w0r1d_d43m0n`);
+    reason = "";
   }
   if (reason && cfg.autoInstall) {
     install = {
@@ -692,8 +707,16 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
   }
 
   // ---------- infra spending: spend early in a run, save as install approaches ----------
-  const remaining = Number.isFinite(nextEta) ? nextEta : cfg.maxRunMs;
-  const infraSpend = Math.min(0.5, Math.max(0.05, (0.5 * remaining) / (remaining + since + 1)));
+  // During the Red Pill push the next *install* is The Red Pill, not the next aug:
+  // using nextEta here made the budget collapse to 5% for hours while 0.5q sat idle.
+  const redPillHold = redPillPush ? pending.find((c) => c.aug === RED_PILL) : null;
+  const holdEta = redPillHold && Number.isFinite(redPillHold.eta) ? redPillHold.eta : cfg.maxRunMs;
+  const remaining = postRedPill ? cfg.maxRunMs : redPillPush ? holdEta : Number.isFinite(nextEta) ? nextEta : cfg.maxRunMs;
+  // No install is coming after The Red Pill: spend everything that can speed up the
+  // hack-level grind; cloud servers are wiped at destroy anyway.
+  const infraSpend = postRedPill
+    ? 0.5
+    : Math.min(0.5, Math.max(0.05, (0.5 * remaining) / (remaining + since + 1)));
 
   return {
     join,
@@ -704,6 +727,8 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     buyNow,
     install,
     destroy,
+    redPillPush,
+    postRedPill,
     bladeburner,
     company,
     companyRoutes: companyRoutes.slice(0, 5),

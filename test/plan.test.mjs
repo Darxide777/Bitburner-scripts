@@ -431,6 +431,8 @@ test("BN12 Red Pill push: hold installs, start Daedalus XP before the money gate
   w.study = { hacking: { university: "ZB Institute of Technology", city: "Volhaven", course: "Algorithms", expPerSec: 50 } };
   const p = plan(input(w, since));
   assert.equal(p.install, null, "holding the run for The Red Pill");
+  assert.equal(p.redPillPush, true);
+  assert.equal(p.postRedPill, false);
   assert.deepEqual(p.hackXp, { level: DAEDALUS_HACK, why: "Daedalus" });
   assert.equal(p.study, null, "hacking XP comes from scripts, not a 28-year class");
   assert.ok(p.notes.some((n) => n.includes("holding install")), p.notes.join("; "));
@@ -442,7 +444,33 @@ test("BN12 Red Pill push: hold installs, start Daedalus XP before the money gate
   assert.equal(plan(input(redPillWorld({ money: 1e6, hackLevel: DAEDALUS_HACK }), since)).hackXp, null);
   const done = redPillWorld({ money: 1e15, hackLevel: DAEDALUS_HACK });
   done.installed.push("The Red Pill");
-  assert.ok(plan(input(done, since)).install, "The Red Pill ends the push");
+  const after = plan(input(done, since));
+  assert.equal(after.install, null, "post-Red-Pill hold: do not reset the w0r1d hack level");
+  assert.equal(after.postRedPill, true);
+  assert.ok(after.notes.some((n) => n.includes("w0r1d_d43m0n")), after.notes.join("; "));
+  assert.ok(plan(input(done, since), { ...DEFAULT_PLAN, autoDestroy: false }).install, "autoDestroy off restores normal installs");
+});
+
+test("BN12 Red Pill push: infra budget follows The Red Pill ETA, not the next aug", () => {
+  const since = { sinceInstall: 3600_000, avgRunRate: 1e3 };
+  const w = redPillWorld({ money: 1e15, hackLevel: 1000 });
+  w.factions.Daedalus = fac({
+    joined: true, rep: 0, workTypes: ["hacking"], bestWork: "hacking", workRepPerSec: 100, augs: ["The Red Pill"],
+  });
+  w.augs["The Red Pill"] = aug({ price: 1e9, repReq: 3_600_000, factions: ["Daedalus"], stats: { hacking: 1.5 } });
+  const p = plan(input(w, since));
+  assert.equal(p.redPillPush, true);
+  assert.ok(p.install === null);
+  assert.ok(p.infraSpend > 0.2, `spend ${p.infraSpend} should use the 10h Red Pill ETA, not nextEta`);
+});
+
+test("BN12 post-Red-Pill: maximize infra spending for the final hack-level grind", () => {
+  const since = { sinceInstall: 3600_000, avgRunRate: 1e3 };
+  const done = redPillWorld({ money: 1e15, hackLevel: DAEDALUS_HACK });
+  done.installed.push("The Red Pill");
+  const p = plan(input(done, since));
+  assert.equal(p.postRedPill, true);
+  assert.equal(p.infraSpend, 0.5);
 });
 
 test("no 'unlocks donations' install for factions that take no donations", () => {

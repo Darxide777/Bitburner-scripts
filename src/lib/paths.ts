@@ -25,6 +25,7 @@ export const DATA = {
   dnet: "data/dnet.txt", // darknet manager status
   company: "data/company.txt", // JSONL: company routes vs. faction grind (megacorp invites)
   grafting: "data/grafting.txt", // JSONL every 10 min: graftable augs valued vs. entropy and time
+  graftingState: "data/grafting-state.txt", // what tasks/graft.js is doing (active graft / last result)
   infiltration: "data/infiltration.txt", // infiltration runs: measured rep/s per location
   infiltrationConfig: "data/infiltration-config.txt", // infiltration control, written by the daemon
   corp: "data/corp.txt", // corporation manager status
@@ -50,6 +51,7 @@ export const SCRIPTS = {
   hacknetManager: "hacknet/manager.js",
   corpManager: "corp/manager.js",
   infiltrate: "infiltrate.js",
+  graft: "tasks/graft.js", // travel to New Tokyo, graft one aug, wait for it
   casinoTable: "casino/table.js", // the DOM-driving script (~36 GB)
   hackScript: "hack/w/h.js",
   growScript: "hack/w/g.js",

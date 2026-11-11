@@ -24,7 +24,7 @@ import type { GoConfig } from "./lib/plan/go.js";
 import { manageSleeves } from "./lib/sleeves.js";
 import { DEFAULT_STANEK, manageStanek, type StanekConfig, type StanekStatus } from "./lib/stanek.js";
 import { runTask, spawnTask } from "./lib/task.js";
-import type { Snapshot } from "./lib/types.js";
+import type { GraftState, Snapshot } from "./lib/types.js";
 import type { HackConfig } from "./hack/manager.js";
 import { act as doActions, type ActArgs } from "./lib/act.js";
 import type { BladeburnerControl, BladeburnerStatus } from "./bladeburner/manager.js";
@@ -37,7 +37,15 @@ import { expectedRunMs, type HacknetConfig } from "./lib/plan/hacknet.js";
 import { averageRate, valueRuns, type RunRecord } from "./lib/plan/runs.js";
 import type { CorpConfig } from "./lib/plan/corp.js";
 import { chooseTarget, cooldownAfter, DEFAULT_INFILTRATION, type InfiltrationConfig } from "./lib/plan/infiltration.js";
-import { CONGRUITY, entropyCost, evaluateGrafts, type GraftRow } from "./lib/plan/grafting.js";
+import {
+  chooseGraft,
+  CONGRUITY,
+  DEFAULT_GRAFTING,
+  entropyCost,
+  evaluateGrafts,
+  type GraftRow,
+  type GraftingConfig,
+} from "./lib/plan/grafting.js";
 import type { InfiltrationControl, InfiltrationState } from "./infiltrate.js";
 import type { CorpControl, CorpStatus } from "./corp/manager.js";
 
@@ -73,8 +81,10 @@ interface DaemonConfig {
   hackXpShare: number;
   /** Once money no longer gates Daedalus, use this share instead (money is not the bottleneck). */
   hackXpShareMax: number;
-  /** Log graftable augs (value vs. entropy and time) every 10 min; no grafting yet. */
+  /** Log graftable augs (value vs. entropy and time) even when auto-grafting is off. */
   logGrafting: boolean;
+  /** Auto-graft when a graft is worth its time and cumulative Entropy hit (see lib/plan/grafting.ts). */
+  grafting: Partial<GraftingConfig>;
   /** Infiltration autoplayer (infiltrate.js) when it beats faction work for the grind faction. */
   manageInfiltration: boolean;
   infiltration: Partial<InfiltrationConfig>;
@@ -114,6 +124,7 @@ const DEFAULTS: DaemonConfig = {
   hackXpShare: 0.5,
   hackXpShareMax: 0.9,
   logGrafting: true,
+  grafting: {},
   manageInfiltration: true,
   infiltration: {},
   manageCorp: true,
@@ -146,7 +157,7 @@ export interface DaemonContext {
   hackLevel: number;
   homeRam: number;
   homeFree: number;
-  /** a UI-driving script (casino.js / infiltrate.js) owns the screen: don't navigate */
+  /** a UI-driving script (casino.js / infiltrate.js) or a graft owns the player: don't navigate or change work */
   uiBusy: boolean;
   /** the faction the player works for, if any; an install about to happen */
   workFaction: string | null;
@@ -367,7 +378,7 @@ export async function main(ns: NS): Promise<void> {
         hackLevel: s.hackLevel,
         homeRam: s.homeRam,
         homeFree: ns.getServerMaxRam("home") - ns.getServerUsedRam("home"),
-        uiBusy: ns.isRunning(SCRIPTS.casinoTable, "home") || ns.ps("home").some((x) => x.filename === SCRIPTS.infiltrate),
+        uiBusy: ns.isRunning(SCRIPTS.casinoTable, "home") || ns.ps("home").some((x) => x.filename === SCRIPTS.infiltrate) || graftingRunning(ns, s),
         workFaction: current?.work?.faction ?? null,
         installPlanned: !!current?.install,
         sinceInstallMs: m.sinceInstall,
@@ -540,6 +551,11 @@ function homeReserve(ns: NS, wanted: string[] = [], extraGB = 0): number {
 
 const CASINO_CAP = 10e9;
 
+/** A graft owns the player's work (the task is traveling, grafting, or waiting for the game). */
+function graftingRunning(ns: NS, s?: Snapshot): boolean {
+  return s?.work?.type === "GRAFTING" || ns.ps("home").some((p) => p.filename === SCRIPTS.graft);
+}
+
 /**
  * Start casino.js when this install's $10b casino allowance is unclaimed and normal income
  * would take more than 30 minutes to make that much — i.e. at the start of a BitNode, not late game.
@@ -552,6 +568,7 @@ const CASINO_CAP = 10e9;
  */
 function casinoModule(ns: NS, s: Snapshot, m: Metrics, event: (k: string, msg: string, d?: unknown) => void) {
   if (ns.isRunning(SCRIPTS.casinoTable, "home")) return;
+  if (graftingRunning(ns, s)) return;
   if ((s.earned.casino ?? 0) >= CASINO_CAP) return;
   if (s.money >= CASINO_CAP) return; // it could at most double what we already hold
   // don't trust an empty window: give the rate trackers a minute after (re)start
@@ -627,6 +644,7 @@ let bladeburnerWanted = false;
  * Simulacrum, and owning it blocks accepting the gift for the rest of the BitNode.
  */
 let lastSleeveLog = 0;
+let lastGraftEval = 0;
 let lastGraftLog = 0;
 let lastCompanyLog = 0;
 let lastCompanyKey = "";
@@ -634,21 +652,46 @@ let lastCompanyKey = "";
 let graftTop: GraftRow | null = null;
 
 /**
- * Every 10 min: value each graftable aug against one Entropy stack and its graft time, next
- * to the faction route's ETA, and log it (data/grafting.txt). Logging only, no grafting yet.
+ * Value each graftable aug against one Entropy stack and its graft time, next to the faction
+ * route's ETA. Auto-graft the best one that clears the net, time, cash and cumulative-Entropy
+ * caps; log the full evaluation to data/grafting.txt every 10 min.
  */
-async function graftingModule(ns: NS, data: FactionData, p: Plan, dcfg: DaemonConfig, cfg: PlanConfig) {
-  if (!dcfg.logGrafting || Date.now() - lastGraftLog < 10 * 60_000) return;
-  if (!((data.sourceFiles["10"] ?? 0) > 0 || data.node === 10)) return;
-  lastGraftLog = Date.now();
-  const augs = (await call<string[]>(ns, "grafting.getGraftableAugmentations")) ?? [];
-  if (!augs.length) return;
+async function graftingModule(
+  ns: NS,
+  data: FactionData,
+  p: Plan,
+  dcfg: DaemonConfig,
+  cfg: PlanConfig,
+  cash: number,
+  busy: boolean,
+  active: boolean,
+  event: (k: string, msg: string, d?: unknown) => void,
+): Promise<boolean> {
+  if (active) return true;
+  const gcfg: GraftingConfig = { ...DEFAULT_GRAFTING, ...dcfg.grafting };
+  if (!gcfg.auto && !dcfg.logGrafting) return false;
+  if (!((data.sourceFiles["10"] ?? 0) > 0 || data.node === 10)) return false;
+  // the first aug forever blocks Stanek's Gift; let manageStanek accept it first
+  const stanekPending =
+    (data.sourceFiles["13"] ?? 0) > 0 &&
+    (dcfg.stanek?.enabled ?? DEFAULT_STANEK.enabled) &&
+    !data.installed.includes("Stanek's Gift - Genesis") &&
+    [...data.installed, ...data.queued].every((a) => a === NFG);
+  if (stanekPending) return false;
+  if (Date.now() - lastGraftEval < (gcfg.auto ? 5 * 60_000 : 10 * 60_000)) return false;
+  lastGraftEval = Date.now();
+  const all = (await call<string[]>(ns, "grafting.getGraftableAugmentations")) ?? [];
+  const unknown = all.filter((a) => !data.augs[a]);
+  const extra = await callEach<Record<string, number>>(ns, "singularity.getAugmentationStats", unknown.map((a) => [a]));
+  const prereqs = await callEach<string[]>(ns, "singularity.getAugmentationPrereq", unknown.map((a) => [a]));
+  const statsOf = new Map(unknown.map((a, k) => [a, extra[k] ?? {}]));
+  const prereqOf = new Map(unknown.map((a, k) => [a, prereqs[k] ?? []]));
+  // getGraftableAugmentations ignores prerequisites, so a graft can still be rejected
+  const installed = new Set(data.installed);
+  const augs = all.filter((a) => (data.augs[a]?.prereqs ?? prereqOf.get(a) ?? []).every((p) => installed.has(p)));
   const one = augs.map((a) => [a]);
   const prices = await callEach<number>(ns, "grafting.getAugmentationGraftPrice", one);
   const times = await callEach<number>(ns, "grafting.getAugmentationGraftTime", one);
-  const unknown = augs.filter((a) => !data.augs[a]);
-  const extra = await callEach<Record<string, number>>(ns, "singularity.getAugmentationStats", unknown.map((a) => [a]));
-  const statsOf = new Map(unknown.map((a, k) => [a, extra[k] ?? {}]));
   // the faction route this run: ready now (0), rep-gated (its ETA), or none (null)
   const eta = new Map<string, number>();
   for (const c of p.ready) eta.set(c.aug, 0);
@@ -668,22 +711,50 @@ async function graftingModule(ns: NS, data: FactionData, p: Plan, dcfg: DaemonCo
     { hasCongruity, entropy, bonus: cfg.augBonus },
   );
   graftTop = rows[0] ?? null;
-  const work = p.work?.faction;
-  appendJsonl(
-    ns,
-    DATA.grafting,
-    {
-      t: Date.now(),
-      entropy,
-      entropyCost: hasCongruity ? 0 : entropyCost(weights),
-      hasCongruity,
-      money: data.money,
-      workRepPerSec: work ? (data.factions[work]?.workRepPerSec ?? 0) : 0,
-      graftable: augs.length,
-      rows: rows.slice(0, 25),
-    },
-    200,
-  );
+  const reserve = gcfg.moneyReserve + (data.node === 12 && !data.factions.Daedalus?.joined ? DAEDALUS_MONEY : 0);
+  const choice = gcfg.auto
+    ? chooseGraft(
+        rows,
+        { ...gcfg, moneyReserve: reserve },
+        {
+          money: cash,
+          installPlanned: !!p.install || p.redPillPush || p.postRedPill,
+          owned: data.installed,
+          queued: data.queued,
+        },
+      )
+    : null;
+  const started = !!choice && !busy && spawnTask(ns, SCRIPTS.graft, [choice.aug, gcfg.focus]) > 0;
+  if (started) {
+    event(
+      "graft",
+      `started grafting ${choice!.aug}: net ${choice!.net.toFixed(2)} (${choice!.netPerHour.toFixed(3)}/h) in ${choice!.hours.toFixed(1)}h, Entropy ${entropy} → ${choice!.entropyAfter}`,
+      { aug: choice!.aug, price: choice!.price, hours: choice!.hours, net: choice!.net, entropy, entropyAfter: choice!.entropyAfter },
+    );
+  }
+  if (Date.now() - lastGraftLog >= 10 * 60_000) {
+    lastGraftLog = Date.now();
+    const work = p.work?.faction;
+    appendJsonl(
+      ns,
+      DATA.grafting,
+      {
+        t: Date.now(),
+        entropy,
+        entropyCost: hasCongruity ? 0 : entropyCost(weights),
+        hasCongruity,
+        money: cash,
+        reserve,
+        workRepPerSec: work ? (data.factions[work]?.workRepPerSec ?? 0) : 0,
+        graftable: augs.length,
+        choice: choice?.aug ?? null,
+        started,
+        rows: rows.slice(0, 25),
+      },
+      200,
+    );
+  }
+  return started;
 }
 
 let infilEstimate: { t: number; repPerSec: number; target: string } = { t: 0, repPerSec: 0, target: "" };
@@ -765,7 +836,7 @@ async function bladeburnerModule(
   data: FactionData,
   p: Plan,
   dcfg: DaemonConfig,
-  casinoRunning: boolean,
+  playerBusy: boolean,
   event: (k: string, msg: string, d?: unknown) => void,
 ) {
   bladeburnerWanted = false;
@@ -775,7 +846,7 @@ async function bladeburnerModule(
   }
   if (!(data.sourceFiles["7"] > 0) && data.node !== 7) return; // no API access
   const stanekSettled = bladeburnerCanJoin(data, dcfg);
-  const ctl: BladeburnerControl = { canJoin: stanekSettled, usePlayer: p.bladeburner && !casinoRunning, cfg: dcfg.bladeburner };
+  const ctl: BladeburnerControl = { canJoin: stanekSettled, usePlayer: p.bladeburner && !playerBusy, cfg: dcfg.bladeburner };
   // join as soon as the stats allow, even before home can hold the manager: the Simulacrum
   // (SF7.3) and rank both start then. One-off proxy call, 4 GB for a moment.
   const combat = ["strength", "defense", "dexterity", "agility"].every((k) => (data.skills[k] ?? 0) >= 100);
@@ -866,17 +937,19 @@ async function factionsModule(
   };
   // casino.js drives the UI (blackjack table); work/travel would navigate away from it
   const casinoBetting = ns.isRunning(SCRIPTS.casinoTable, "home");
-  const infiltrating = await infiltrationModule(ns, data, p, dcfg, casinoBetting, event);
-  // casino.js / infiltrate.js drive the UI; work/travel would navigate away from it
-  const casinoRunning = casinoBetting || infiltrating;
-  if (casinoRunning) {
+  const graftActive = graftingRunning(ns, s);
+  const infiltrating = await infiltrationModule(ns, data, p, dcfg, casinoBetting || graftActive, event);
+  // casino.js / infiltrate.js drive the UI, and a graft owns the player's time
+  let busy = casinoBetting || infiltrating || graftActive;
+  const stopActions = () => {
     act.work = null;
     act.crime = null;
     act.travelTo = null;
     act.train = null;
     act.company = null;
     act.study = null;
-  }
+  };
+  if (busy) stopActions();
   // the planner is stateless; a cooldown stops it from bouncing between cities
   if (act.travelTo) {
     if (Date.now() - lastTravel < TRAVEL_COOLDOWN_MS) act.travelTo = null;
@@ -907,8 +980,12 @@ async function factionsModule(
     event("error", `stanek failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  await bladeburnerModule(ns, data, p, dcfg, casinoRunning, event);
-  await graftingModule(ns, data, p, dcfg, cfg);
+  await bladeburnerModule(ns, data, p, dcfg, busy, event);
+  const graftStarted = await graftingModule(ns, data, p, dcfg, cfg, s.money, busy, graftActive, event);
+  if (graftStarted) {
+    busy = true;
+    stopActions();
+  }
   lastSkills = Object.fromEntries(Object.entries(data.skills).map(([k, v]) => [k, Math.round(v)]));
   workableFactions = new Set(Object.keys(data.factions).filter((f) => data.factions[f].workTypes.length > 0));
   noteMilestones(ns, data, s, event);
@@ -937,7 +1014,7 @@ async function factionsModule(
         p.favorFactions,
         act.work?.faction ?? null,
         needKarma,
-        casinoRunning ? 0 : undefined, // no sleeve aug purchases while casino.js is betting
+        busy ? 0 : undefined, // no sleeve aug purchases while casino.js is betting or a graft owns the player
         {
           recovery: { ...DEFAULT_RECOVERY, ...dcfg.sleeveRecovery },
           bladeburner: bbInDivision && readJson<Partial<BladeburnerStatus>>(ns, DATA.bladeburner, {}).blackOpsDone !== true,
@@ -964,10 +1041,10 @@ async function factionsModule(
     if (!(e instanceof CallError)) event("error", `faction actions failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  if (p.backdoor.length && spawnTask(ns, "tasks/backdoor.js", [p.backdoor[0]]))
+  if (!busy && p.backdoor.length && spawnTask(ns, "tasks/backdoor.js", [p.backdoor[0]]))
     event("backdoor", `installing backdoor on ${p.backdoor[0]}`);
 
-  if (p.install && !casinoRunning) {
+  if (p.install && !busy) {
     event("install", `install planned: ${p.install.reason}`, {
       buy: p.install.buy.map(([, a]) => a),
       cost: p.readyCost,
@@ -1122,8 +1199,11 @@ function draw(
 
   if (graftTop)
     L.push(
-      `grafting (log only): best ${graftTop.aug} net ${graftTop.net.toFixed(2)} in ${graftTop.hours.toFixed(1)}h (${graftTop.netPerHour.toFixed(3)}/h)${graftTop.factionEtaH === null ? ", no faction offers it" : ""}`,
+      `grafting: best ${graftTop.aug} net ${graftTop.net.toFixed(2)} in ${graftTop.hours.toFixed(1)}h (${graftTop.netPerHour.toFixed(3)}/h), Entropy → ${graftTop.entropyAfter}${graftTop.factionEtaH === null ? ", no faction offers it" : ""}`,
     );
+  const gs = readJson<Partial<GraftState>>(ns, DATA.graftingState, {});
+  if (graftingRunning(ns, s) && (gs.status === "starting" || gs.status === "grafting") && gs.aug)
+    L.push(`  ${gs.aug} grafting since ${dur(Date.now() - (gs.started ?? gs.t ?? Date.now()))}`);
   const co = readJson<Partial<CorpStatus>>(ns, DATA.corp, {});
   if (co.t && Date.now() - co.t < 300_000)
     L.push(
@@ -1202,6 +1282,8 @@ function describeWork(s: Snapshot): string {
       return `crime ${w.crimeType}`;
     case "CLASS":
       return `class ${w.classType}`;
+    case "GRAFTING":
+      return `grafting ${w.augmentation}`;
     default:
       return w.type.toLowerCase();
   }

@@ -51,6 +51,7 @@ daemon.js                 orchestrator: telemetry → metrics → planner module
 │   ├─ contracts.js       solve every coding contract on the network (every 5 min)
 │   ├─ contracts-selftest.js  every solver vs. the game's dummy contracts, once per build
 │   ├─ install.js         buy planned augs → home RAM → NeuroFlux → install, restart daemon
+│   ├─ graft.js           travel to New Tokyo, graft one aug, wait for completion
 │   └─ destroy.js         destroy w0r1d_d43m0n → next BN12
 ├─ tmp/call/*.js          generated one-function proxies (see lib/call.ts)
 ├─ hack/manager.js        long-running HWGW batcher across every rooted server's RAM
@@ -129,9 +130,13 @@ collects faction/aug state and the planner decides:
   that takes them. In BN12, once Daedalus' 30-aug requirement is met, `pushRedPill` (default on)
   suppresses installs until The Red Pill; set it false to keep the normal cadence. The push is
   capped by `pushRedPillMaxMs` (48h) so a stalled XP farm cannot hold the run forever.
-  `plan.installRates` shows both rates. Leftover money goes to home RAM, then NeuroFlux levels.
+  After The Red Pill, `autoDestroy` holds all further installs until w0r1d_d43m0n: an install
+  would reset the hack level needed to destroy it. `plan.installRates` shows both rates.
+  Leftover money goes to home RAM, then NeuroFlux levels.
 - *infra spend*: the economy module's budget tapers from 50% to 5% as install approaches,
-  because cloud servers are wiped on install.
+  because cloud servers are wiped on install. During the Red Pill push it follows The Red
+  Pill's ETA instead of the next aug's, and after The Red Pill it opens to 50% because the
+  only remaining goal is the final hack-level grind.
 - *destroy*: with The Red Pill installed and the hack level reached, destroy w0r1d_d43m0n
   and start the next BN12.
 
@@ -276,14 +281,25 @@ waits 10 min, doubling per failure in a row (max 2 h). While it
 runs the daemon leaves work, travel and installs alone. This deliberately bypasses the game's
 anti-automation; `"manageInfiltration": false` turns it off.
 
-**Grafting** (`lib/plan/grafting.ts`, logging only for now; needs SF10). From the game's source:
-a grafted aug applies at once and lasts until the BitNode ends, but each graft adds an Entropy
-stack that lasts as long — every gain multiplier ×0.98, hacknet costs ÷0.98 — unless you own
-The Congruity Implant (grafting it also clears all Entropy). Grafting takes your time. Every
-10 min the daemon logs to `data/grafting.txt`, for each graftable aug: graft price and hours,
-its value in the planner's units, `net` = value − one Entropy stack (priced with the same
-weights), net per hour, and the faction route's ETA this run (null = no faction offers it);
-Congruity is credited with removing your current stacks. The dashboard shows the best row.
+**Grafting** (`lib/plan/grafting.ts` decides, `tasks/graft.js` grafts; needs SF10). From the
+game's source: a grafted aug applies at once and lasts until the BitNode ends, but each graft
+adds an Entropy stack that lasts as long — every gain multiplier ×0.98, hacknet costs ÷0.98 —
+unless you own The Congruity Implant (grafting it also clears all Entropy). Grafting takes your
+time. Every 5 min the daemon values each graftable aug against one Entropy stack and its graft
+time, next to the faction route's ETA. It auto-grafts the best row that clears all caps:
+`net` = value − one Entropy stack (always positive), net/hour, `maxGraftMs`, `maxEntropy`
+(default 3 stacks after the graft), cash after `moneyReserve`, and `onlyIfFaster` versus the
+faction route. A faction route ready now is never grafted (it comes with the next install), and
+The Red Pill / NeuroFlux are skipped. Grafting is also skipped while installs are held for
+The Red Pill, and after The Red Pill when `autoDestroy` is finishing the run: a graft would
+pause the Daedalus/hack-level work it is meant to speed up. Until Daedalus is joined in BN12,
+the graft price must also leave `$100b` in cash. While a graft runs, work, travel, installs,
+casino and infiltration are paused; the task travels to New Tokyo and waits for the game's own
+completion signal. The full evaluation is logged to `data/grafting.txt` every 10 min (with the
+chosen row and Entropy
+before/after), and `data/grafting-state.txt` records the active/last graft. Configure overrides
+under `"grafting"`: `auto`, `minNet`, `minNetPerHour`, `maxGraftMs`, `maxEntropy`, `moneyReserve`,
+`onlyIfFaster`, `focus`, `skip`.
 
 **Coding contracts** (`lib/contracts.ts`, pure and unit-tested). All 30 contract types have a
 solver; Hamming codes and LZ compression follow the game's own algorithms, since answers must
@@ -442,7 +458,7 @@ opened caches.
 - [x] Gang: creation, recruit, equipment, training, respect/money mode, wanted control,
       territory warfare, ascension
 - [x] Grafting: per-aug value vs. Entropy and time, logged every 10 min
-- [ ] Grafting: act on it (graft when net/hour beats the player's current activity)
+- [x] Grafting: autoplay when net/hour clears time, cash and cumulative-Entropy caps
 - [x] Gang: v3 install penalty — hold ascensions before installs, report the projected loss
 - [x] Hacknet servers: data-priced hash spending, payback-based production
 - [ ] Hacknet: value SP, gym/study and company favor
