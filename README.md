@@ -34,7 +34,9 @@ While connected, the sync server also:
 - writes a build hash to `build.txt` on home once a build has settled; `daemon.js` notices the
   change and restarts itself and the hack/gang/Go managers on the new code (`tasks/restart.js`)
 
-Compare BitNodes with `node tools/nodes.mjs` (cleared nodes and the current one's milestones).
+Compare BitNodes with `node tools/nodes.mjs` (cleared nodes and the current one's milestones)
+and individual runs with `node tools/runs.mjs [count]` (duration, income, XP, spend, aug value,
+and percent change from the previous run).
 Other commands: `npm run build`, `npm run typecheck`, `npm test` (planner unit tests),
 `npm run sync` (sync without the tsc watcher), and
 `node tools/ram-audit.mjs dist/<script>.js <RamCostGenerator.ts>`, an offline estimate of a
@@ -392,8 +394,8 @@ faction-working.
 | `data/status.txt` | latest snapshot + metrics (overwritten each tick) |
 | `data/metrics.txt` | JSONL, one line/minute: income/s (+ by source), rep/s per faction, karma/s, time to gang, hack xp/s, RAM pool, and `systems`: Bladeburner rank/rate, gang, Stanek bonuses, corp, stocks, hacknet, skills, sleeve shock |
 | `data/events.txt` | JSONL decision log (purchases, roots, resets, errors) |
-| `data/runs.txt` | JSONL, one line per augment install / node reset: duration, peak income, peak rep/s, augs bought (+ NeuroFlux), their value, install reason and install-timing rates |
-| `data/nodes.txt` | JSONL, one line per cleared BitNode: length, installs, winning route, every milestone's time |
+| `data/runs.txt` | JSONL, one line per augment install / node reset: duration, node elapsed, money/earned/run spend, install spend, hack level/XP/rep start→end and gains, peak income/rep/money, augs bought (+ NeuroFlux), their value/value-per-hour, install reason/rates, and `vsPrev` percent changes from the previous run |
+| `data/nodes.txt` | JSONL, one line per cleared BitNode: length, installs (average run length), winning route, every milestone's time, plus total earned/spent, hack XP, peak income/rep/money and earned-by-source totals |
 | `data/milestones.txt` | JSONL: first time each milestone happens in a node (casino cap, gang, Bladeburner, Simulacrum, Stanek augs, Daedalus, Red Pill, w0r1d hack level, 4S, corp) |
 | `data/hack.txt` | hacking manager status: targets, batches, expected $/s |
 

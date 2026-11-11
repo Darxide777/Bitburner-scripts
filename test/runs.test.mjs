@@ -1,7 +1,7 @@
 // Install timing tests (run against the compiled output: `npm test`).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { valueRuns, averageRate } from "../dist/lib/plan/runs.js";
+import { valueRuns, averageRate, compareRun } from "../dist/lib/plan/runs.js";
 
 test("runs are valued by the augs their install bought; average = total value / total time", () => {
   const runs = [
@@ -24,4 +24,24 @@ test("runs are valued by the augs their install bought; average = total value / 
 test("a run's stored value wins over matching install events", () => {
   const v = valueRuns([{ t: 1000, durationMs: 1000, value: 7 }], [{ t: 999, bought: ["A"], nfg: 0 }], () => 1, 0);
   assert.equal(v[0].value, 7);
+});
+
+test("compareRun reports percent changes and skips missing fields", () => {
+  const prev = { durationMs: 1000, earnedTotal: 100, incomePerSec: 0.1, hackExpPerSec: 5, valueRate: 0.002 };
+  const cur = { durationMs: 800, earnedTotal: 120, incomePerSec: 0.15, hackExpPerSec: 6, valueRate: 0.0025 };
+  const c = compareRun(cur, prev);
+  assert.ok(c);
+  const close = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-12, `${actual} ≈ ${expected}`);
+  close(c.durationPct, -0.2); // shorter is negative
+  close(c.earnedPct, 0.2);
+  close(c.incomePct, 0.5);
+  close(c.hackExpPct, 0.2);
+  close(c.valueRatePct, 0.25);
+
+  const old = compareRun({ durationMs: 500 }, prev);
+  assert.ok(old);
+  close(old.durationPct, -0.5);
+  assert.equal(old.earnedPct, null, "old records still compare duration");
+  assert.equal(compareRun(cur, null), null);
+  assert.equal(compareRun(cur, { durationMs: 0 }), null);
 });

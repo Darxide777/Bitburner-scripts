@@ -12,6 +12,48 @@ export interface RunRecord {
   durationMs: number;
   /** value of what its install bought, stored with the record (newer runs) */
   value?: number;
+  /** upgrade/install runs are comparable; a node record summarizes the whole node */
+  kind?: "install" | "node";
+  node?: number;
+  /** totals logged with newer runs, for the per-run comparison */
+  earnedTotal?: number;
+  incomePerSec?: number;
+  hackExpPerSec?: number;
+  valueRate?: number;
+}
+
+export interface RunStats {
+  durationMs: number;
+  earnedTotal?: number;
+  incomePerSec?: number;
+  hackExpPerSec?: number;
+  valueRate?: number;
+}
+
+export interface RunComparison {
+  durationPct: number | null;
+  earnedPct: number | null;
+  incomePct: number | null;
+  hackExpPct: number | null;
+  valueRatePct: number | null;
+}
+
+const pctChange = (cur?: number, prev?: number): number | null =>
+  cur != null && prev != null && Number.isFinite(cur) && Number.isFinite(prev) && prev > 0 ? (cur - prev) / prev : null;
+
+/**
+ * Percent change from the previous comparable run (negative duration = faster).
+ * Missing fields stay null, so older records still compare duration.
+ */
+export function compareRun(cur: RunStats, prev?: RunStats | null): RunComparison | null {
+  if (!prev || !(prev.durationMs > 0)) return null;
+  return {
+    durationPct: pctChange(cur.durationMs, prev.durationMs),
+    earnedPct: pctChange(cur.earnedTotal, prev.earnedTotal),
+    incomePct: pctChange(cur.incomePerSec, prev.incomePerSec),
+    hackExpPct: pctChange(cur.hackExpPerSec, prev.hackExpPerSec),
+    valueRatePct: pctChange(cur.valueRate, prev.valueRate),
+  };
 }
 
 export interface InstallRecord {

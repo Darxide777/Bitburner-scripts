@@ -34,7 +34,7 @@ import { DEFAULT_STOCKS, type StockConfig } from "./lib/plan/stocks.js";
 import type { StocksControl, StocksStatus } from "./stocks/manager.js";
 import type { HacknetControl, HacknetStatus } from "./hacknet/manager.js";
 import { expectedRunMs, type HacknetConfig } from "./lib/plan/hacknet.js";
-import { averageRate, valueRuns, type RunRecord } from "./lib/plan/runs.js";
+import { averageRate, compareRun, valueRuns, type RunRecord } from "./lib/plan/runs.js";
 import type { CorpConfig } from "./lib/plan/corp.js";
 import { chooseTarget, cooldownAfter, DEFAULT_INFILTRATION, type InfiltrationConfig } from "./lib/plan/infiltration.js";
 import {
@@ -173,8 +173,30 @@ interface DaemonState {
   nodeInstalls?: number;
   /** milestone → ms since this BitNode started (first time each happened) */
   milestones?: Record<string, number>;
+  /** totals across every run in this BitNode, for the node comparison line */
+  nodeEarned?: Record<string, number>;
+  nodeSpent?: number;
+  nodeHackExp?: number;
+  nodePeakIncome?: number;
+  nodePeakRep?: number;
+  nodePeakMoney?: number;
   /** Peak values of the run in progress, summarized into data/runs.txt on reset. */
-  cur: { start: number; peakIncome: number; peakRepRate: number; hackLevel: number; augsInstalled: number };
+  cur: {
+    start: number;
+    peakIncome: number;
+    peakRepRate: number;
+    hackLevel: number;
+    augsInstalled: number;
+    startMoney?: number;
+    lastMoney?: number;
+    peakMoney?: number;
+    startHackLevel?: number;
+    startHackExp?: number;
+    lastHackExp?: number;
+    startRepTotal?: number;
+    lastRepTotal?: number;
+    lastEarned?: Snapshot["earned"];
+  };
 }
 
 const STATE_FILE = "data/daemon-state.txt";
@@ -1090,6 +1112,58 @@ function metricsLine(s: Snapshot, m: Metrics, hackInfo: { expectedPerSec?: numbe
   };
 }
 
+function freshRun(s: Snapshot, start = s.lastAugReset): DaemonState["cur"] {
+  const rep = sumNumbers(s.rep);
+  return {
+    start,
+    peakIncome: 0,
+    peakRepRate: 0,
+    hackLevel: s.hackLevel,
+    augsInstalled: s.augsInstalled,
+    startMoney: s.money,
+    lastMoney: s.money,
+    peakMoney: s.money,
+    startHackLevel: s.hackLevel,
+    startHackExp: s.hackExp,
+    lastHackExp: s.hackExp,
+    startRepTotal: rep,
+    lastRepTotal: rep,
+    lastEarned: { ...s.earned },
+  };
+}
+
+/** Sum the numeric values of an earnings object (MoneySource or accumulated node totals). */
+function sumNumbers(o: object | undefined): number {
+  return o ? Object.values(o).reduce<number>((a, v) => a + (typeof v === "number" ? v : 0), 0) : 0;
+}
+
+/** MoneySource has both its categories and a `total`; prefer the total to avoid double counting. */
+function earnedTotalOf(o: object | undefined): number {
+  const total = (o as { total?: unknown } | undefined)?.total;
+  return typeof total === "number" ? total : sumNumbers(o);
+}
+
+function addEarned(total: Record<string, number>, run: Snapshot["earned"]): Record<string, number> {
+  const out = { ...total };
+  for (const [k, v] of Object.entries(run)) out[k] = (out[k] ?? 0) + v;
+  return out;
+}
+
+/** Last install run in this BitNode before `before`, for the per-run comparison. */
+function previousInstallRun(ns: NS, node: number, before: number, after: number): RunRecord | null {
+  const lines = ns.read(DATA.runs).split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i]) continue;
+    try {
+      const r = JSON.parse(lines[i]) as RunRecord;
+      if (r.node === node && r.kind !== "node" && r.t < before && r.t >= after && r.durationMs > 0) return r;
+    } catch {
+      /* ignore a torn line */
+    }
+  }
+  return null;
+}
+
 /** Detect augment installs / node resets and write one summary line per finished run. */
 function trackRuns(ns: NS, s: Snapshot, tracker: MetricsTracker, event: (k: string, m: string, d?: unknown) => void) {
   const st = readJson<(DaemonState & { run?: DaemonState["cur"] }) | null>(ns, STATE_FILE, null);
@@ -1098,13 +1172,7 @@ function trackRuns(ns: NS, s: Snapshot, tracker: MetricsTracker, event: (k: stri
   // migrate older state files (the field used to be called `run`) and repair partial ones
   if (st && !st.cur) {
     // bracket access: a bare `.run` would cost 1 GB (it matches ns.run in the RAM calculator)
-    st.cur = st["run"] ?? {
-      start: st.lastAugReset ?? s.lastAugReset,
-      peakIncome: 0,
-      peakRepRate: 0,
-      hackLevel: s.hackLevel,
-      augsInstalled: s.augsInstalled,
-    };
+    st.cur = st["run"] ?? freshRun(s, st.lastAugReset ?? s.lastAugReset);
     delete st["run"];
   }
   if (!st || typeof st.lastAugReset !== "number") {
@@ -1112,61 +1180,163 @@ function trackRuns(ns: NS, s: Snapshot, tracker: MetricsTracker, event: (k: stri
       lastAugReset: s.lastAugReset,
       lastNodeReset: s.lastNodeReset,
       installs: 0,
-      cur: { start: s.lastAugReset, peakIncome: 0, peakRepRate: 0, hackLevel: s.hackLevel, augsInstalled: s.augsInstalled },
+      cur: freshRun(s),
     } satisfies DaemonState);
     return;
   }
+  // state written before the extra run fields: start them from the current snapshot
+  const cur = st.cur;
+  cur.startMoney ??= s.money;
+  cur.lastMoney ??= s.money;
+  cur.peakMoney ??= s.money;
+  cur.startHackLevel ??= s.hackLevel;
+  cur.startHackExp ??= s.hackExp;
+  cur.lastHackExp ??= s.hackExp;
+  cur.startRepTotal ??= sumNumbers(s.rep);
+  cur.lastRepTotal ??= cur.startRepTotal;
+  cur.lastEarned ??= { ...s.earned };
+
   if (st.lastAugReset !== s.lastAugReset) {
     const nodeReset = st.lastNodeReset !== s.lastNodeReset;
     // what the install bought and why (files written just before it; only if they're this run's)
-    const fresh = <T extends { t?: number }>(x: T) => (x.t ?? 0) >= st.cur.start;
-    const bought = readJson<{ t?: number; bought?: string[]; nfg?: number; reason?: string }>(ns, DATA.lastInstall, {});
+    const fresh = <T extends { t?: number }>(x: T) => (x.t ?? 0) >= cur.start;
+    const bought = readJson<{
+      t?: number;
+      bought?: string[];
+      nfg?: number;
+      queued?: number;
+      reason?: string;
+      spent?: number;
+      moneyBefore?: number;
+      moneyAfter?: number;
+    }>(ns, DATA.lastInstall, {});
     const ictx = readJson<{ t?: number; reason?: string; rates?: unknown; augValues?: Record<string, number>; nfgValue?: number }>(ns, DATA.installContext, {});
     const got = fresh(bought) ? bought : {};
     const vals = fresh(ictx) ? ictx : {};
+    const installSpent = got.spent ?? 0;
     const value =
       got.bought && vals.augValues
         ? got.bought.reduce((a, aug) => a + (vals.augValues![aug] ?? 0), 0) + (got.nfg ?? 0) * (vals.nfgValue ?? 0)
         : undefined;
+
+    // values from the last pre-install tick: the snapshot that detected the reset is already post-install
+    const durationMs = s.lastAugReset - cur.start;
+    const durationSec = durationMs / 1000;
+    const startMoney = cur.startMoney ?? s.money;
+    const endMoney = cur.lastMoney ?? s.money;
+    const earned = cur.lastEarned ?? s.earned;
+    const earnedTotal = earnedTotalOf(earned);
+    const spent = startMoney + earnedTotal - endMoney;
+    const startHackExp = cur.startHackExp ?? s.hackExp;
+    const endHackExp = cur.lastHackExp ?? startHackExp;
+    const hackExpGained = Math.max(0, endHackExp - startHackExp);
+    const hackExpPerSec = durationSec > 0 ? hackExpGained / durationSec : 0;
+    const startHackLevel = cur.startHackLevel ?? cur.hackLevel;
+    const hackLevelGain = Math.max(0, cur.hackLevel - startHackLevel);
+    const startRep = cur.startRepTotal ?? sumNumbers(s.rep);
+    const endRep = cur.lastRepTotal ?? startRep;
+    const repGained = Math.max(0, endRep - startRep);
+    const repPerSec = durationSec > 0 ? repGained / durationSec : 0;
+    const incomePerSec = durationSec > 0 ? earnedTotal / durationSec : 0;
+    const valueRate = value != null && durationSec > 0 ? value / durationSec : undefined;
+    const vsPrev = compareRun(
+      { durationMs, earnedTotal, incomePerSec, hackExpPerSec, valueRate },
+      previousInstallRun(ns, s.node, s.t, s.lastNodeReset),
+    );
+
     appendJsonl(ns, DATA.runs, {
       t: s.t,
       kind: nodeReset ? "node" : "install",
       node: s.node,
-      durationMs: s.lastAugReset - st.cur.start,
-      peakIncomePerSec: st.cur.peakIncome,
-      peakRepPerSec: st.cur.peakRepRate,
-      endHackLevel: st.cur.hackLevel,
-      augsBefore: st.cur.augsInstalled,
+      runIndex: st.installs + 1,
+      nodeRun: (st.nodeInstalls ?? 0) + 1,
+      startedAt: cur.start,
+      durationMs,
+      nodeElapsedMs: s.t - st.lastNodeReset,
+      moneyStart: startMoney,
+      moneyEnd: endMoney,
+      earned,
+      earnedTotal,
+      spent,
+      installMoneyBefore: got.moneyBefore,
+      installMoneyAfter: got.moneyAfter,
+      installSpent: got.spent,
+      installQueued: got.queued,
+      hackLevelStart: startHackLevel,
+      hackLevelEnd: cur.hackLevel,
+      hackLevelGain,
+      hackExpStart: startHackExp,
+      hackExpEnd: endHackExp,
+      hackExpGained,
+      hackExpPerSec,
+      repStart: startRep,
+      repEnd: endRep,
+      repGained,
+      repPerSec,
+      peakMoney: cur.peakMoney ?? endMoney,
+      peakIncomePerSec: cur.peakIncome,
+      peakRepPerSec: cur.peakRepRate,
+      augsBefore: cur.augsInstalled,
       augsAfter: s.augsInstalled,
       bought: got.bought,
       nfg: got.nfg,
       value,
+      valueRate,
       reason: vals.reason ?? got.reason,
       rates: vals.rates,
+      vsPrev,
     });
     st.nodeInstalls = (st.nodeInstalls ?? 0) + 1;
+    st.nodeEarned = addEarned(st.nodeEarned ?? {}, earned);
+    st.nodeSpent = (st.nodeSpent ?? 0) + spent + installSpent;
+    st.nodeHackExp = (st.nodeHackExp ?? 0) + hackExpGained;
+    st.nodePeakIncome = Math.max(st.nodePeakIncome ?? 0, cur.peakIncome);
+    st.nodePeakRep = Math.max(st.nodePeakRep ?? 0, cur.peakRepRate);
+    st.nodePeakMoney = Math.max(st.nodePeakMoney ?? 0, cur.peakMoney ?? endMoney);
     if (nodeReset) {
       const dctx = readJson<{ t?: number; route?: string; node?: number }>(ns, DATA.destroyContext, {});
+      const nodeDuration = s.lastNodeReset - st.lastNodeReset;
       appendJsonl(ns, DATA.nodes, {
         t: s.t,
         node: dctx.node ?? null,
-        durationMs: s.lastNodeReset - st.lastNodeReset,
+        durationMs: nodeDuration,
         installs: st.nodeInstalls,
+        avgRunMs: st.nodeInstalls > 0 ? nodeDuration / st.nodeInstalls : null,
         route: (dctx.t ?? 0) >= st.lastNodeReset ? dctx.route : null,
         milestones: st.milestones ?? {},
+        earned: st.nodeEarned,
+        earnedTotal: earnedTotalOf(st.nodeEarned),
+        spent: st.nodeSpent,
+        hackExpGained: st.nodeHackExp,
+        peakIncomePerSec: st.nodePeakIncome,
+        peakRepPerSec: st.nodePeakRep,
+        peakMoney: st.nodePeakMoney,
       });
       st.nodeInstalls = 0;
       st.milestones = {};
+      st.nodeEarned = {};
+      st.nodeSpent = 0;
+      st.nodeHackExp = 0;
+      st.nodePeakIncome = 0;
+      st.nodePeakRep = 0;
+      st.nodePeakMoney = 0;
     }
-    event("reset", nodeReset ? "BitNode reset detected" : `augments installed (+${s.augsInstalled - st.cur.augsInstalled})`);
+    event("reset", nodeReset ? "BitNode reset detected" : `augments installed (+${s.augsInstalled - cur.augsInstalled})`);
     st.installs++;
     st.lastAugReset = s.lastAugReset;
     st.lastNodeReset = s.lastNodeReset;
-    st.cur = { start: s.lastAugReset, peakIncome: 0, peakRepRate: 0, hackLevel: s.hackLevel, augsInstalled: s.augsInstalled };
+    st.cur = freshRun(s);
+  } else {
+    // mid-run peak/end values; the pre-install tick is what the next run summary uses
+    st.cur.peakIncome = Math.max(st.cur.peakIncome, r.income);
+    st.cur.peakRepRate = Math.max(st.cur.peakRepRate, r.repTotal);
+    st.cur.hackLevel = s.hackLevel;
+    st.cur.lastMoney = s.money;
+    st.cur.peakMoney = Math.max(st.cur.peakMoney ?? s.money, s.money);
+    st.cur.lastHackExp = s.hackExp;
+    st.cur.lastRepTotal = sumNumbers(s.rep);
+    st.cur.lastEarned = { ...s.earned };
   }
-  st.cur.peakIncome = Math.max(st.cur.peakIncome, r.income);
-  st.cur.peakRepRate = Math.max(st.cur.peakRepRate, r.repTotal);
-  st.cur.hackLevel = s.hackLevel;
   writeJson(ns, STATE_FILE, st);
 }
 

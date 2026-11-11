@@ -33,6 +33,8 @@ export async function main(ns: NS): Promise<void> {
       if (short > 0) S.sellShort(sym, short);
     }
 
+  // after selling stocks, so the spend is the install's own cash outlay
+  const moneyBefore = money();
   for (const [f, amt] of a.donate) if (amt <= money()) sing.donateToFaction(f as FactionName, amt);
   for (const [f, aug] of a.buy) if (sing.purchaseAugmentation(f as FactionName, aug)) bought.push(aug);
 
@@ -62,13 +64,24 @@ export async function main(ns: NS): Promise<void> {
   }
 
   const queued = sing.getOwnedAugmentations(true).length - sing.getOwnedAugmentations(false).length;
+  const moneyAfter = money();
+  const spent = Math.max(0, moneyBefore - moneyAfter);
   // events.txt is capped; this file survives so the next run record can say what was bought
-  writeJson(ns, DATA.lastInstall, { t: Date.now(), bought, nfg, reason: a.reason });
+  writeJson(ns, DATA.lastInstall, {
+    t: Date.now(),
+    bought,
+    nfg,
+    queued,
+    reason: a.reason,
+    moneyBefore,
+    moneyAfter,
+    spent,
+  });
   appendJsonl(ns, DATA.events, {
     t: Date.now(),
     kind: "install",
     msg: `installing ${queued} augs (${bought.length} planned + ${nfg} NeuroFlux): ${a.reason}`,
-    data: { bought, nfg, reason: a.reason },
+    data: { bought, nfg, queued, reason: a.reason, spent },
   });
   if (queued > 0) sing.installAugmentations(SCRIPTS.daemon);
 }
