@@ -240,8 +240,9 @@ sells; it measures each purchase's real effect and uses that instead of the 2% d
 Production (level/RAM/cores/servers) is bought by payback time — it must pay back within half
 the expected rest of the run, since installs wipe hacknet servers — with the planner's infra
 share of cash, and not while the casino bets. `data/hacknet.txt` shows the ranked options.
-Hacknet servers never run scripts (`isHacknet` in `lib/net.ts`): RAM in use lowers their hash
-production, and hashes sell for money anyway.
+Hacknet servers normally never run scripts (`isHacknet` in `lib/net.ts`): RAM in use lowers
+their hash production, and hashes sell for money anyway. In *share-only* mode the hack manager
+deliberately borrows their free RAM for `share()`, trading hashes for faction rep.
 
 **Stocks** (`lib/plan/stocks.ts` decides, `stocks/manager.ts` acts). Buys a WSE account, TIX API
 and 4S Market Data TIX API once each costs ≤50% of cash (`stocksAccessBudgetFrac`; `1` buys as soon as affordable; they survive installs), then trades on
@@ -387,8 +388,8 @@ timings are exact, and `additionalMsec` makes each batch land H→W→G→W. Sev
 concurrently, ranked by $ per GB·s. Leftover RAM is lent to factions via `share()` while
 faction-working. In the BN12 Red Pill push, once the planner sees every wanted aug is affordable
 (no skill gate, Daedalus joined, Red Pill not installed) and only faction rep is left, it switches
-to *share-only*: in-flight money workers are killed and the whole hack pool runs 1-round `share()`
-until money is needed again.
+to *share-only*: in-flight money workers are killed and the whole hack pool—including hacknet
+server RAM—runs 1-round `share()` until money is needed again.
 
 **Telemetry files** (on home, mirrored to `./logs/`):
 

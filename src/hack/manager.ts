@@ -103,7 +103,9 @@ export async function main(ns: NS): Promise<void> {
     const pool: Pool = new Map();
     let managedRam = 0;
     for (const h of hosts) {
-      if (isHacknet(h) || skipHosts.has(h)) continue;
+      // Hacknet RAM is normally off-limits (using it cuts hash production), but in
+      // share-only mode faction rep is worth more than hashes.
+      if ((!cfg.shareOnly && isHacknet(h)) || skipHosts.has(h)) continue;
       try {
         if (!ns.hasRootAccess(h)) continue;
         const max = ns.getServerMaxRam(h);

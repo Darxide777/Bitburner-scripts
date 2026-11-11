@@ -4,8 +4,9 @@ import type { NS } from "@ns";
 import { WORLD_DAEMON } from "./paths.js";
 
 /**
- * Hacknet servers never run scripts: any RAM in use lowers their hash production, and
- * hashes sell for money anyway. Every place that picks hosts for scripts uses this.
+ * Hacknet servers are normally excluded from script hosts: any RAM in use lowers their
+ * hash production, and hashes mostly sell for money. The hack manager deliberately
+ * borrows their RAM in share-only mode, when faction rep matters more than hashes.
  */
 export const isHacknet = (host: string): boolean => host.startsWith("hacknet-");
 
