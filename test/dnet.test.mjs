@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { main as enableMain } from "../dist/user/dnet/enable.js";
 import { main as labMain } from "../dist/user/dnet/lab.js";
-import { REWARD_PORT, mergeLocalSnapshots, paths, recordReward } from "../dist/user/dnet/lib.js";
+import { REWARD_PORT, mergeLocalSnapshots, paths, readLabStatus, recordReward } from "../dist/user/dnet/lib.js";
 
 function fileNs(files) {
   return {
@@ -30,6 +30,42 @@ test("reward telemetry is written to the shared reward port", () => {
   assert.equal(writes.length, 1);
   assert.equal(writes[0][0], REWARD_PORT);
   assert.match(writes[0][1], /darkweb loot\.cache: found \$1m \(karma -3\)/);
+});
+
+test("lab status finds the active labyrinth and reports depth/charisma", () => {
+  const ns = {
+    dnet: {
+      getServerDetails: (host) => {
+        if (host === "m3rc1l3ss_l4byr1nth") {
+          return {
+            isOnline: true,
+            modelId: "(The Labyrinth)",
+            depth: 19,
+            requiredCharismaSkill: 1500,
+          };
+        }
+        return { isOnline: false, modelId: "", depth: -1, requiredCharismaSkill: 0 };
+      },
+    },
+  };
+  assert.deepEqual(readLabStatus(ns), {
+    host: "m3rc1l3ss_l4byr1nth",
+    name: "MercilessLab",
+    tier: 3,
+    depth: 19,
+    charisma: 1500,
+  });
+});
+
+test("lab status is null without an online labyrinth", () => {
+  const ns = {
+    dnet: {
+      getServerDetails: () => {
+        throw new Error("not a darknet server");
+      },
+    },
+  };
+  assert.equal(readLabStatus(ns), null);
 });
 
 test("enable merges the manager without dropping existing config", async () => {

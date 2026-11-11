@@ -30,6 +30,25 @@ export const MODEL = {
   labyrinth: "(The Labyrinth)",
 };
 
+export const LAB_HOSTS = [
+  { host: "th3_l4byr1nth", name: "NormalLab", tier: 1 },
+  { host: "cru3l_l4byr1nth", name: "CruelLab", tier: 2 },
+  { host: "m3rc1l3ss_l4byr1nth", name: "MercilessLab", tier: 3 },
+  { host: "ub3r_l4byr1nth", name: "UberLab", tier: 4 },
+  { host: "et3rn4l_l4byr1nth", name: "EternalLab", tier: 5 },
+  { host: "end13ss_l4byr1nth", name: "EndlessLab", tier: 6 },
+  { host: "f1n4l_l4byr1nth", name: "FinalLab", tier: 7 },
+  { host: "b0nus_l4byr1nth", name: "BonusLab", tier: 8 },
+] as const;
+
+export interface LabStatus {
+  host: string;
+  name: string;
+  tier: number;
+  depth: number;
+  charisma: number;
+}
+
 export const DIGITS = "0123456789";
 export const LOWER = "abcdefghijklmnopqrstuvwxyz";
 export const UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -252,6 +271,23 @@ export function paths(ns: NS): DnetPaths {
     snap: dir + "snap.json",
     rewards: dir + "rewards.txt",
   };
+}
+
+export function readLabStatus(ns: NS): LabStatus | null {
+  for (const lab of LAB_HOSTS) {
+    try {
+      const details = ns.dnet.getServerDetails(lab.host);
+      if (!details || details.isOnline === false || details.modelId !== MODEL.labyrinth) continue;
+      return {
+        host: lab.host,
+        name: lab.name,
+        tier: lab.tier,
+        depth: details.depth,
+        charisma: details.requiredCharismaSkill,
+      };
+    } catch {}
+  }
+  return null;
 }
 
 export function recordReward(ns: NS, host: string, file: string, result: CacheResult): void {

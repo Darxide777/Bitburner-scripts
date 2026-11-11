@@ -29,7 +29,9 @@ darknet hosts in `data/user-reserve.txt`, and pauses while the daemon reports `u
 ## Verify rewards
 
 The manager also writes `data/dnet.txt` (pulled to `logs/dnet.txt` by the sync tool) with
-`known`, `darkwebRoamer`, `setupRunning`, `rewards`, and `lastReward`.
+`known`, `charisma`, `lab`, `darkwebRoamer`, `setupRunning`, `rewards`, and `lastReward`.
+`lab` is the active Labyrinth (`host`, `name`, `tier`, `depth`, `charisma`) or `null` if it
+is not online.
 
 Successful cache opens are appended to `user/dnet/rewards.txt` on home and printed as
 `[dnet-manager] reward ...` in the manager log. Open caches can award money, experience,

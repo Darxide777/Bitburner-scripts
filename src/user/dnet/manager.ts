@@ -11,6 +11,7 @@ import {
   mergeLocalSnapshots,
   paths,
   pushSnapshotTo,
+  readLabStatus,
   saveStore,
   storeHash,
   type DnetPaths,
@@ -260,6 +261,8 @@ export async function main(ns: NS): Promise<void> {
       writeJson(ns, DATA.dnet, {
         t: Date.now(),
         known: keys.length,
+        charisma: ns.getPlayer().skills.charisma,
+        lab: readLabStatus(ns),
         darkwebRoamer: running,
         setupRunning: ns.isRunning(p.setup, "home"),
         rewards: rewardCount,
