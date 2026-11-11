@@ -7,6 +7,7 @@ import { readJson, writeJson } from "../lib/io.js";
 import { DATA } from "../lib/paths.js";
 import {
   BB_RANK,
+  chooseRamUpgrade,
   chooseUpgrade,
   CONTRACT,
   CORP_FUNDS,
@@ -20,12 +21,20 @@ import {
   valueOptions,
   type HacknetConfig,
   type HashOption,
+  type RamUpgrade,
   type ServerInfo,
+  type Upgrade,
 } from "../lib/plan/hacknet.js";
 
 export interface HacknetControl {
   buy: boolean;
   cfg?: Partial<HacknetConfig>;
+  /** Cash to keep for augs; production never spends below this. */
+  reserve?: number;
+  /** Absolute $ budget for this plan (share-only mode); tracked across ticks. */
+  budget?: number;
+  /** Buy only RAM/new servers, for share() threads instead of hash production. */
+  shareRam?: boolean;
 }
 
 export interface HacknetStatus {
@@ -53,11 +62,18 @@ export async function main(ns: NS): Promise<void> {
   const spent: Record<string, number> = {};
   const bought: Record<string, number> = {};
   const ema = (old: number | null, x: number) => (old === null ? x : old + 0.3 * (x - old));
+  let budgetKey = "";
+  let budgetSpent = 0;
 
   while (true) {
     await ns.sleep(2000);
     const ctl = readJson<HacknetControl>(ns, DATA.hacknetConfig, { buy: false });
     const cfg: HacknetConfig = { ...DEFAULT_HACKNET, ...ctl.cfg };
+    const nextBudgetKey = `${ctl.budget ?? "f"}:${ctl.reserve ?? 0}:${ctl.shareRam ?? false}`;
+    if (nextBudgetKey !== budgetKey) {
+      budgetKey = nextBudgetKey;
+      budgetSpent = 0;
+    }
     const n = H.numNodes();
     const capacity = H.hashCapacity();
     const status: HacknetStatus = {
@@ -168,42 +184,57 @@ export async function main(ns: NS): Promise<void> {
       options.sort((a, b) => b.perHash - a.perHash);
     }
 
-    if (!ns.fileExists("Formulas.exe", "home")) status.note = "no Formulas.exe: not buying production yet";
-    else if (!ctl.buy) status.note = "not buying (casino running)";
-    else {
+    const reserve = Math.max(0, ctl.reserve ?? 0);
+    const budgetNow = () => {
+      const surplus = Math.max(0, ns.getServerMoneyAvailable("home") - reserve);
+      return ctl.budget != null ? Math.min(surplus, Math.max(0, ctl.budget - budgetSpent)) : surplus * cfg.budgetFrac;
+    };
+    const costOf = (u: { kind: string; index: number }) =>
+      u.kind === "level"
+        ? H.getLevelUpgradeCost(u.index, 1)
+        : u.kind === "ram"
+          ? H.getRamUpgradeCost(u.index, 1)
+          : u.kind === "cores"
+            ? H.getCoreUpgradeCost(u.index, 1)
+            : H.numNodes() < H.maxNumNodes()
+              ? H.getPurchaseNodeCost()
+              : Infinity;
+    const purchase = (u: Upgrade | RamUpgrade) => {
+      const ok =
+        u.kind === "level"
+          ? H.upgradeLevel(u.index, 1)
+          : u.kind === "ram"
+            ? H.upgradeRam(u.index, 1)
+            : u.kind === "cores"
+              ? H.upgradeCore(u.index, 1)
+              : H.purchaseNode() >= 0;
+      if (!ok) return false;
+      budgetSpent += u.cost;
+      bought[u.kind] = (bought[u.kind] ?? 0) + 1;
+      if (u.kind === "server") servers.push({ level: 1, ram: 1, cores: 1, production: 0 });
+      else {
+        const s = H.getNodeStats(u.index);
+        servers[u.index] = { level: s.level, ram: s.ram, cores: s.cores, production: s.production };
+      }
+      return true;
+    };
+
+    if (!ctl.buy) status.note = "not buying (casino running)";
+    else if (!ctl.shareRam && !ns.fileExists("Formulas.exe", "home")) status.note = "no Formulas.exe: not buying production yet";
+    else if (ctl.shareRam) {
+      status.note = "share-only: buying RAM/servers for share()";
+      for (let k = 0; k < 10; k++) {
+        const u = chooseRamUpgrade(servers, costOf, budgetNow());
+        if (!u || !purchase(u)) break;
+      }
+    } else {
       const F = ns.formulas.hacknetServers;
       const rate = (level: number, ram: number, cores: number) => F.hashGainRate(level, 0, ram, cores, 1);
       const hashValue = Math.max(...options.map((o) => o.perHash), 250_000);
-      const costOf = (u: { kind: string; index: number }) =>
-        u.kind === "level"
-          ? H.getLevelUpgradeCost(u.index, 1)
-          : u.kind === "ram"
-            ? H.getRamUpgradeCost(u.index, 1)
-            : u.kind === "cores"
-              ? H.getCoreUpgradeCost(u.index, 1)
-              : H.numNodes() < H.maxNumNodes()
-                ? H.getPurchaseNodeCost()
-                : Infinity;
       const fallbackMult = ns.getPlayer().mults.hacknet_node_money;
       for (let k = 0; k < 10; k++) {
-        const budget = ns.getServerMoneyAvailable("home") * cfg.budgetFrac;
-        const u = chooseUpgrade(servers, rate, costOf, hashValue, remainingSec, budget, cfg, fallbackMult);
-        if (!u) break;
-        const ok =
-          u.kind === "level"
-            ? H.upgradeLevel(u.index, 1)
-            : u.kind === "ram"
-              ? H.upgradeRam(u.index, 1)
-              : u.kind === "cores"
-                ? H.upgradeCore(u.index, 1)
-                : H.purchaseNode() >= 0;
-        if (!ok) break;
-        bought[u.kind] = (bought[u.kind] ?? 0) + 1;
-        if (u.kind === "server") servers.push({ level: 1, ram: 1, cores: 1, production: 0 });
-        else {
-          const s = H.getNodeStats(u.index);
-          servers[u.index] = { level: s.level, ram: s.ram, cores: s.cores, production: s.production };
-        }
+        const u = chooseUpgrade(servers, rate, costOf, hashValue, remainingSec, budgetNow(), cfg, fallbackMult);
+        if (!u || !purchase(u)) break;
       }
       // the best non-sell option no longer fits the cache: grow the cache (cheapest server first)
       const sellPer = options.find((x) => x.name === SELL)?.perHash ?? 0;
@@ -211,8 +242,11 @@ export async function main(ns: NS): Promise<void> {
       if (want && want.cost > capacity && n > 0) {
         let best = 0;
         for (let i = 1; i < n; i++) if (H.getCacheUpgradeCost(i, 1) < H.getCacheUpgradeCost(best, 1)) best = i;
-        if (H.getCacheUpgradeCost(best, 1) <= ns.getServerMoneyAvailable("home") * cfg.budgetFrac && H.upgradeCache(best, 1))
+        const cost = H.getCacheUpgradeCost(best, 1);
+        if (cost <= budgetNow() && H.upgradeCache(best, 1)) {
+          budgetSpent += cost;
           bought.cache = (bought.cache ?? 0) + 1;
+        }
       }
     }
     writeJson(ns, DATA.hacknet, status);

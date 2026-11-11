@@ -1,5 +1,5 @@
 // Infrastructure spending: TOR + darkweb programs, home RAM/cores, cloud servers.
-// args: budget ($ this task may spend this call)
+// args: budget ($ this task may spend this call), reserve ($ to keep for augs)
 // Returns a list of human-readable actions taken (logged as events by the daemon).
 //
 // Priorities (each step only spends what's left of the budget):
@@ -15,7 +15,8 @@ const PROGRAMS = ["BruteSSH.exe", "FTPCrack.exe", "relaySMTP.exe", "HTTPWorm.exe
 export async function main(ns: NS): Promise<void> {
   await task(ns, (args) => {
     const sing = ns.singularity;
-    let budget = Math.min(Number(args[0]) || 0, ns.getPlayer().money);
+    const reserve = Math.max(0, Number(args[1]) || 0);
+    let budget = Math.min(Number(args[0]) || 0, Math.max(0, ns.getPlayer().money - reserve));
     const actions: string[] = [];
     const spend = (cost: number, what: string, buy: () => boolean) => {
       if (cost > budget || !Number.isFinite(cost)) return false;

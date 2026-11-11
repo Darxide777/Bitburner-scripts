@@ -188,6 +188,10 @@ export interface Plan {
   repBound: boolean;
   /** BN12 Red Pill run: money is done, so spend the whole hack pool on share(). */
   shareAll: boolean;
+  /** Cash to keep for every wanted aug (escalated prices) and donations. */
+  augReserve: number;
+  /** Absolute $ the infra modules may spend; excludes `augReserve` in share-only mode. */
+  infraBudget: number;
   notes: string[];
 }
 
@@ -410,6 +414,11 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     .sort((a, b) => b.value / Math.max(1000, b.eta) - a.value / Math.max(1000, a.eta));
   const nextEta = Math.min(Infinity, ...pending.map((p) => p.eta));
   const repBound = !moneyBound && pending.some((c) => c.repGap > 0 && c.donation === 0);
+  // Turning hacking off is only safe if the cash on hand still buys every wanted aug
+  // and pays every planned donation; otherwise the next one becomes unaffordable.
+  const augReserve =
+    escalatedCost(candidates.map((c) => c.price), data.priceMult) + candidates.reduce((s, c) => s + c.donation, 0);
+  const moneyDone = !moneyBound && data.money >= augReserve;
 
   // requirement context (company rep included: company work can earn it)
   const reqCtx: ReqContext = {
@@ -721,18 +730,21 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
   const redPillHold = redPillPush ? pending.find((c) => c.aug === RED_PILL) : null;
   const holdEta = redPillHold && Number.isFinite(redPillHold.eta) ? redPillHold.eta : cfg.maxRunMs;
   const remaining = postRedPill ? cfg.maxRunMs : redPillPush ? holdEta : Number.isFinite(nextEta) ? nextEta : cfg.maxRunMs;
-  // No install is coming after The Red Pill: spend everything that can speed up the
-  // hack-level grind; cloud servers are wiped at destroy anyway.
-  const infraSpend = postRedPill
-    ? 0.5
-    : Math.min(0.5, Math.max(0.05, (0.5 * remaining) / (remaining + since + 1)));
   const shareAll =
     data.node === 12 &&
     !!F.Daedalus?.joined &&
     !data.installed.includes(RED_PILL) &&
-    !moneyBound &&
+    moneyDone &&
     repBound &&
     hackXp === null;
+  // Share-only mode spends the cash above `augReserve` on more RAM; keeping the normal
+  // fraction would leave most of the surplus idle. Stocks hold all cash meanwhile.
+  const infraSpend = shareAll
+    ? 1
+    : postRedPill
+      ? 0.5
+      : Math.min(0.5, Math.max(0.05, (0.5 * remaining) / (remaining + since + 1)));
+  const infraBudget = shareAll ? Math.max(0, data.money - augReserve) : data.money * infraSpend;
 
   return {
     join,
@@ -784,6 +796,8 @@ export function plan(input: PlanInput, cfg: PlanConfig = DEFAULT_PLAN): Plan {
     moneyBound,
     repBound,
     shareAll,
+    augReserve,
+    infraBudget,
     notes,
   };
 }

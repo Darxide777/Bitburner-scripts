@@ -93,6 +93,26 @@ test("BN12 shares the whole pool once money is done and rep is the bottleneck", 
   assert.equal(p.moneyBound, false);
   assert.equal(p.repBound, true);
   assert.equal(p.shareAll, true);
+  assert.ok(p.augReserve > 0 && p.augReserve < 1e12);
+  assert.equal(p.infraSpend, 1);
+  assert.equal(p.infraBudget, w.money - p.augReserve);
+});
+
+test("share-all waits for cash to cover every wanted aug at once", () => {
+  const w = world({ money: 1.5e6 });
+  w.factions = {
+    Daedalus: fac({ joined: true, workTypes: ["hacking"], bestWork: "hacking", workRepPerSec: 10 }),
+    CyberSec: fac({ joined: true, workTypes: ["hacking"], bestWork: "hacking", workRepPerSec: 10, augs: ["A", "B"] }),
+  };
+  w.augs = {
+    A: aug({ price: 1e6, factions: ["CyberSec"] }),
+    B: aug({ price: 1e6, factions: ["CyberSec"] }),
+  };
+  const p = plan(input(w));
+  assert.equal(p.moneyBound, false, "each aug fits on its own");
+  assert.equal(p.augReserve, 2.9e6, "but not both with 1.9× escalation");
+  assert.equal(p.repBound, true);
+  assert.equal(p.shareAll, false);
 });
 
 test("an unaffordable aug keeps BN12 share-all off", () => {

@@ -280,6 +280,11 @@ export async function main(ns: NS): Promise<void> {
         buy: !ns.isRunning(SCRIPTS.casinoTable, "home"),
         cfg: { budgetFrac: Math.max(0.05, current?.infraSpend ?? 0.25), ...cfg.hacknet },
       };
+      if (current?.shareAll) {
+        ctl.reserve = current.augReserve;
+        ctl.shareRam = true;
+        if (cfg.infraSpend == null) ctl.budget = Math.max(0, current.infraBudget) * 0.25;
+      }
       writeJson(ns, DATA.hacknetConfig, ctl);
       if (!ns.isRunning(SCRIPTS.hacknetManager, "home") && ns.exec(SCRIPTS.hacknetManager, "home")) event("hacknet", "started hacknet manager");
     }
@@ -396,8 +401,13 @@ export async function main(ns: NS): Promise<void> {
     // ---- economy (frozen while casino.js bets: spending would make the game reject a bet) ----
     if (s && Date.now() - lastEconomy > cfg.economyEveryMs && !ns.isRunning(SCRIPTS.casinoTable, "home")) {
       lastEconomy = Date.now();
+      // Share-only: 75% of the surplus above the aug reserve goes to cloud servers,
+      // 25% is written to the hacknet controller below.
+      const shareBudget = cfg.infraSpend == null && current?.shareAll ? Math.max(0, current.infraBudget) * 0.75 : null;
       const spend = cfg.infraSpend ?? current?.infraSpend ?? 0.5;
-      const r = await runTask<string[]>(ns, "tasks/economy.js", [s.money * spend]);
+      const budget = shareBudget ?? s.money * spend;
+      const reserve = shareBudget == null ? 0 : current?.augReserve ?? 0;
+      const r = await runTask<string[]>(ns, "tasks/economy.js", [budget, reserve]);
       if (r.ok) for (const a of r.value ?? []) event("buy", a);
       else if (r.reason !== "ram") event("error", `economy failed: ${r.error}`);
     }
@@ -1443,7 +1453,8 @@ function draw(
     for (const c of plan.pending.slice(0, 4))
       L.push(`  ${pad(c.aug, 34)} ${pad(c.faction, 18)} ${pad(money(c.price), 9, true)}  ${dur(c.eta)}`);
     if (plan.install) L.push(`  → installing: ${plan.install.reason}`);
-    if (plan.shareAll && plan.work) L.push(`  → money target met: all hack RAM on ${plan.work.faction} rep`);
+    if (plan.shareAll && plan.work)
+      L.push(`  → money target met: reserve ${money(plan.augReserve)}, all surplus RAM on ${plan.work.faction} rep`);
   }
 
   if (recent.length) {

@@ -138,7 +138,10 @@ collects faction/aug state and the planner decides:
 - *infra spend*: the economy module's budget tapers from 50% to 5% as install approaches,
   because cloud servers are wiped on install. During the Red Pill push it follows The Red
   Pill's ETA instead of the next aug's, and after The Red Pill it opens to 50% because the
-  only remaining goal is the final hack-level grind.
+  only remaining goal is the final hack-level grind. In *share-only* mode the planner keeps
+  `augReserve` (the escalated cost of every wanted aug plus donations) in cash and spends the
+  rest: 75% on cloud servers, 25% on hacknet RAM/new servers. Both are RAM for `share()`;
+  hacknet levels/cores are skipped because they add hashes, not threads.
 - *destroy*: with The Red Pill installed and the hack level reached, destroy w0r1d_d43m0n
   and start the next BN12.
 
@@ -242,7 +245,8 @@ the expected rest of the run, since installs wipe hacknet servers — with the p
 share of cash, and not while the casino bets. `data/hacknet.txt` shows the ranked options.
 Hacknet servers normally never run scripts (`isHacknet` in `lib/net.ts`): RAM in use lowers
 their hash production, and hashes sell for money anyway. In *share-only* mode the hack manager
-deliberately borrows their free RAM for `share()`, trading hashes for faction rep.
+deliberately borrows their free RAM for `share()`, and the hacknet manager buys RAM upgrades and
+new servers instead of levels/cores, trading hashes for faction rep.
 
 **Stocks** (`lib/plan/stocks.ts` decides, `stocks/manager.ts` acts). Buys a WSE account, TIX API
 and 4S Market Data TIX API once each costs ≤50% of cash (`stocksAccessBudgetFrac`; `1` buys as soon as affordable; they survive installs), then trades on

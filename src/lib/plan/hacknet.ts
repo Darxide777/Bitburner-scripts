@@ -14,6 +14,7 @@
 // Production (level / RAM / cores / new servers) is bought by payback time:
 //   cost ÷ (extra hashes/s × best $ per hash), and only if it pays back within
 //   `paybackFrac` of the time left (installs wipe hacknet servers too).
+// In share-only mode RAM is bought by $/GB instead: threads matter, hashes do not.
 
 export const SELL = "Sell for Money";
 export const MAX_MONEY = "Increase Maximum Money";
@@ -160,6 +161,14 @@ export interface ServerInfo {
   production: number;
 }
 
+export interface RamUpgrade {
+  kind: "ram" | "server";
+  index: number;
+  cost: number;
+  /** GB added to the hack pool */
+  gainGB: number;
+}
+
 export interface Upgrade {
   kind: "level" | "ram" | "cores" | "server";
   index: number;
@@ -202,6 +211,26 @@ export function chooseUpgrade(
   const limit = Math.max(cfg.minRemainingSec, remainingSec) * cfg.paybackFrac;
   const best = cands.filter((c) => c.paybackSec <= limit).sort((a, b) => a.paybackSec - b.paybackSec)[0];
   return best ?? null;
+}
+
+/**
+ * Best RAM purchase by $/GB for share-only mode: double an existing server (adds `ram` GB)
+ * or add a new 1 GB server. Levels and cores do not add share threads, so they are skipped.
+ */
+export function chooseRamUpgrade(
+  servers: ServerInfo[],
+  costOf: (u: { kind: Upgrade["kind"]; index: number }) => number,
+  budget: number,
+): RamUpgrade | null {
+  const cands: RamUpgrade[] = [];
+  const consider = (kind: RamUpgrade["kind"], index: number, gainGB: number) => {
+    const cost = costOf({ kind, index });
+    if (!(cost > 0) || !Number.isFinite(cost) || cost > budget || !(gainGB > 0)) return;
+    cands.push({ kind, index, cost, gainGB });
+  };
+  servers.forEach((s, i) => consider("ram", i, s.ram));
+  consider("server", servers.length, 1);
+  return cands.sort((a, b) => a.cost / a.gainGB - b.cost / b.gainGB)[0] ?? null;
 }
 
 /** Median of the last 5 run lengths (ms); fallback when there are fewer than 2. */

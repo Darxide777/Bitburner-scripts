@@ -1,7 +1,7 @@
 // Hacknet decision tests (run against the compiled output: `npm test`).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { valueOptions, decideSpend, chooseUpgrade, expectedRunMs, SELL, MAX_MONEY, MIN_SEC, BB_RANK, CONTRACT, CORP_FUNDS, DEFAULT_HACKNET } from "../dist/lib/plan/hacknet.js";
+import { valueOptions, decideSpend, chooseUpgrade, chooseRamUpgrade, expectedRunMs, SELL, MAX_MONEY, MIN_SEC, BB_RANK, CONTRACT, CORP_FUNDS, DEFAULT_HACKNET } from "../dist/lib/plan/hacknet.js";
 
 const costs = { [SELL]: 4, [MAX_MONEY]: 50, [MIN_SEC]: 50, [BB_RANK]: 250, [CONTRACT]: 200 };
 const base = (o = {}) => ({ remainingSec: 1800, incomePerSec: 1e7, targets: [], costs, ...o });
@@ -60,6 +60,16 @@ test("production: best payback within half the run left, within budget", () => {
   assert.ok(Math.abs(u.gain - (rate(11, 1, 1) - rate(10, 1, 1)) * 2) < 1e-9, "uses the measured multiplier");
   assert.equal(chooseUpgrade(servers, rate, costOf, 250_000, 3600, 5e5), null, "over budget");
   assert.equal(chooseUpgrade(servers, rate, () => 1e15, 250_000, 3600, 1e18), null, "never pays back");
+});
+
+test("share RAM mode buys GB per dollar: RAM upgrades or new servers", () => {
+  const servers = [{ level: 10, ram: 4, cores: 1, production: 0 }];
+  const costs = (ram, server) => ({ kind }) => (kind === "ram" ? ram : kind === "server" ? server : Infinity);
+  // doubling 4 → 8 GB for $8m beats a new 1 GB server for $10m
+  assert.deepEqual(chooseRamUpgrade(servers, costs(8e6, 1e7), 1e12), { kind: "ram", index: 0, cost: 8e6, gainGB: 4 });
+  // a cheap new server wins when RAM is expensive
+  assert.equal(chooseRamUpgrade(servers, costs(8e8, 1e6), 1e12).kind, "server");
+  assert.equal(chooseRamUpgrade(servers, costs(8e6, 1e6), 1e5), null, "over budget");
 });
 
 test("expected run length: median of the last 5 runs", () => {
