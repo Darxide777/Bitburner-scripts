@@ -3,7 +3,7 @@
 // Steered by data/hacknet-config.txt from the daemon (buy: false while the casino bets).
 // Status in data/hacknet.txt, including the *measured* effect of each upgrade bought.
 import type { HacknetServerHashUpgrade, NS } from "@ns";
-import { readJson, writeJson } from "../lib/io.js";
+import { readJson, appendStatus } from "../lib/io.js";
 import { DATA } from "../lib/paths.js";
 import {
   BB_RANK,
@@ -92,7 +92,7 @@ export async function main(ns: NS): Promise<void> {
     };
     if (n > 0 && capacity <= 0) {
       status.note = "hacknet nodes, not servers (needs SF9): nothing to manage";
-      writeJson(ns, DATA.hacknet, status);
+      appendStatus(ns, DATA.hacknet, status);
       await ns.sleep(60_000);
       continue;
     }
@@ -249,6 +249,6 @@ export async function main(ns: NS): Promise<void> {
         }
       }
     }
-    writeJson(ns, DATA.hacknet, status);
+    appendStatus(ns, DATA.hacknet, status);
   }
 }
