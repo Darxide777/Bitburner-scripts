@@ -484,6 +484,17 @@ its fallback, which blinds the daemon and the other managers.
 
 ### Bugs — ready to do, most important first
 
+- [ ] **0. Status files were switched to append mode: undo it first** — commit `c85e1ea`
+  - Problem: that commit replaced `writeJson` with `appendStatus` (JSON lines) for
+    `data/hack.txt`, `gang.txt`, `hacknet.txt`, `stocks.txt`, `corp.txt`, `bladeburner.txt`,
+    `go.txt` and `dnet.txt`, but every reader still uses `readJson`, which cannot parse a
+    multi-line file and returns its fallback. The daemon, the hacknet manager and the planner
+    then see empty status for every manager. The hack manager also re-reads a file of up to
+    11,000 lines every 5 seconds.
+  - Change: `git revert c85e1ea`. Nothing else.
+  - If a history of status snapshots is wanted, write it to a **separate** log file and keep
+    the status file as one JSON object written with `writeJson`.
+
 - [ ] **1. Install freeze never turns on** — `src/daemon.ts`
   - Find: `const installing = ns.isRunning("tasks/install.js", "home");`
   - Problem: `tasks/install.js` is started with arguments (see `spawnTask` in `src/lib/task.ts`),
