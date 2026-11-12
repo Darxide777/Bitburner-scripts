@@ -497,8 +497,21 @@ CI run `npm test`; never bypass them.
 - [ ] **2. Hacknet manager dies on a torn `runs.txt` line** — `src/hacknet/manager.ts`
   - Find: `const runs = ns` followed by `.read(DATA.runs)` and `JSON.parse(l)`.
   - Problem: one half-written line makes `JSON.parse` throw and the whole manager exits.
-  - Change: copy the pattern already used in `gangModule` in `src/daemon.ts`: declare
-    `let runs: number[] = [];` and do the read/parse inside `try { … } catch { /* torn line */ }`.
+  - Change: skip bad lines instead of dropping the whole history. Replace only the
+    `.map((l) => (JSON.parse(l) as { durationMs?: number }).durationMs ?? 0);` step with:
+    ```ts
+      .flatMap((l) => {
+        try {
+          return [(JSON.parse(l) as { durationMs?: number }).durationMs ?? 0];
+        } catch {
+          return []; // torn line: skip it, keep the rest
+        }
+      });
+    ```
+    Keep `const runs = ns`, `.read(DATA.runs)`, `.split("\n")` and `.filter(Boolean)` as they are.
+  - Do not copy the `try { … } catch` around the whole read in `gangModule` (`src/daemon.ts`):
+    it throws away every run when one line is bad. Leave `gangModule` unchanged too.
+  - Done when: `npm test` passes, and only `src/hacknet/manager.ts` changed.
 
 - [ ] **3. Installs donate too much** — `src/lib/plan/factions.ts`, `test/plan.test.mjs`
   - Problem: each candidate aug gets its own `donation` (`repGap / data.repPerDollar`). When two
