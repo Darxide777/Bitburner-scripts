@@ -10,7 +10,8 @@
     "defs": "node tools/fix-defs.mjs",
     "dev": "node tools/sync.mjs",
     "sync": "node tools/sync.mjs --no-watch-build",
-    "test": "tsc -p . && node --test test/*.test.mjs"
+    "test": "tsc -p . && node --test test/*.test.mjs",
+    "prepare": "git config core.hooksPath .githooks || true"
   },
   "devDependencies": {
     "typescript": "5.9.3",

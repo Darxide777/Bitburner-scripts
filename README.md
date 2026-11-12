@@ -463,24 +463,11 @@ opened caches.
 Work list from the code review of 2026-11-11 (commit `c5776eb`). Written so that a small model
 can pick up one item at a time.
 
-**Rules for every item**
-
-- Do exactly one item per commit. Change only the files the item names.
-- Line numbers are from commit `c5776eb` and will drift: find the code by the quoted text.
-- Before committing, run `npm run typecheck` and `npm test`. Both must pass.
-- Do not change behaviour the item does not mention. Do not reformat or rename nearby code.
-- When the item is done, tick its box here in the same commit.
-- If the code no longer matches the description, stop and say so instead of guessing.
-
-**Pitfall behind several items:** `ns.isRunning(script, host)` and `ns.kill(script, host)` only
-match a process that was started with **no arguments**. For a script started with arguments, pass
-the same arguments, use the pid, or look for the filename in `ns.ps(host)`.
-
-**Status files are not logs:** files such as `data/hack.txt`, `data/gang.txt`, `data/stocks.txt`,
-`data/corp.txt`, `data/hacknet.txt`, `data/bladeburner.txt`, `data/go.txt` and `data/dnet.txt`
-hold one JSON object and are read with `readJson`. Always write them with `writeJson`. Appending
-lines to them (`appendJsonl` or a wrapper around it) makes every `readJson` of that file return
-its fallback, which blinds the daemon and the other managers.
+**Before you start:** read `AGENTS.md`, sections "Rules for every change" and "Pitfalls".
+In short: one item per session and per commit, change only the files the item names, find code
+by the quoted text (line numbers are from commit `c5776eb` and drift), tick the item's box in
+the same commit, and stop if the code no longer matches the description. A pre-commit hook and
+CI run `npm test`; never bypass them.
 
 ### Bugs — ready to do, most important first
 
@@ -503,7 +490,8 @@ its fallback, which blinds the daemon and the other managers.
   - Also, in `factionsModule`, find `if (p.install && !busy) {` and change the condition to
     `if (p.install && !busy && !installing) {`, so a running install is not killed and restarted
     by `freeHome`.
-  - Done when: typecheck and tests pass, and no other line of the file changed.
+  - Also delete the `tasks/install.js` entry from `ALLOWED` in `test/conventions.test.mjs`.
+  - Done when: `npm test` passes, and nothing else in `src/daemon.ts` changed.
 
 - [ ] **2. Hacknet manager dies on a torn `runs.txt` line** — `src/hacknet/manager.ts`
   - Find: `const runs = ns` followed by `.read(DATA.runs)` and `JSON.parse(l)`.
@@ -551,6 +539,7 @@ its fallback, which blinds the daemon and the other managers.
   - Change: `if (ns.isRunning(p.lab, me, host, details.requiredCharismaSkill)) return true;`
     (the same arguments as the `ns.exec` call below it). Do not use `ns.ps` here: it would add
     RAM to a script that runs on small servers.
+  - Also delete the `ns.isRunning(p.lab, me)` entry from `ALLOWED` in `test/conventions.test.mjs`.
 
 - [ ] **7. Gang manager crashes without Formulas.exe** — `src/gang/manager.ts`
   - Problem: `ns.formulas.gang` throws when Formulas.exe is missing, the script exits, and the

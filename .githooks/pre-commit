@@ -1,0 +1,21 @@
+#!/bin/sh
+# Blocks a commit unless the build, the typecheck and every test pass.
+# Enabled by `npm install` (package.json "prepare"), or by hand:
+#   git config core.hooksPath .githooks
+# Do not bypass it with --no-verify: fix the failure, or stop and report it.
+set -e
+cd "$(git rev-parse --show-toplevel)"
+
+# commits that touch no code (README, AGENTS.md, …) have nothing to test
+if ! git diff --cached --name-only | grep -qE '^(src|test|tools|types)/|^(package(-lock)?|tsconfig)\.json$'; then
+  exit 0
+fi
+
+echo "pre-commit: npm test (build + typecheck + tests)"
+if ! out=$(npm test 2>&1); then
+  printf '%s\n' "$out" | tail -n 60
+  echo
+  echo "pre-commit: FAILED - the commit was not made. Fix the errors above and commit again."
+  exit 1
+fi
+echo "pre-commit: ok"

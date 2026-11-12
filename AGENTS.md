@@ -97,11 +97,57 @@ Self-optimizing full-game automation for Bitburner. Written from scratch in Type
 | `daemon.ts` | Main orchestrator |
 | `user/dnet/` | Darknet (user/custom modules) |
 
+## Rules for every change
+- **One task per session, one task per commit.** Take one item from the "To do" list in
+  `README.md`, finish it, commit it, and stop. Start a new session for the next item.
+- **Change only what the task names.** No drive-by refactors, renames or reformatting.
+- **Find code by its text, not by line number.** Line numbers in the to-do list drift.
+- **If the code does not match the task description, stop and report it.** Do not guess.
+- **Check your assumption before you build on it.** If a fix depends on how an `ns` function
+  behaves, read its entry in `types/NetscriptDefinitions.d.ts` first.
+- **The commit message describes only what this commit changes.** Do not list work from
+  earlier commits.
+- **Tests must pass before every commit.** A pre-commit hook runs `npm test` and blocks the
+  commit if it fails; CI runs the same on GitHub. Never use `git commit --no-verify`.
+- **Never edit a test to make it pass** unless the task is to change that test. The one
+  exception: when you fix a call listed in `ALLOWED` in `test/conventions.test.mjs`, delete
+  its entry there in the same commit.
+
+## Pitfalls (each of these has already broken the project)
+
+### `ns.isRunning` / `ns.kill` by name need the script's arguments
+`ns.isRunning(script, host)` and `ns.kill(script, host)` only match a process that was started
+with **no arguments**. For a script started with arguments they return `false` and do nothing,
+without an error.
+- Every task started with `runTask` or `spawnTask` has arguments (the result file is the first).
+- Workers (`hack/w/*`), `infiltrate.js`, the Stanek charger and the darknet roamer/lab have
+  arguments too.
+- Use one of: the pid (`ns.isRunning(pid)`, `ns.kill(pid)`), the same arguments
+  (`ns.isRunning(script, host, ...args)`), or `ns.ps(host).some((p) => p.filename === script)`.
+- Checked by `test/conventions.test.mjs`.
+
+### Status files are not logs
+`data/hack.txt`, `gang.txt`, `stocks.txt`, `corp.txt`, `hacknet.txt`, `bladeburner.txt`,
+`go.txt`, `dnet.txt` and every other file read with `readJson` hold **one JSON object**.
+- Write them with `writeJson` only.
+- Never append to them (`appendJsonl`, `appendLines`, or a wrapper): `readJson` cannot parse a
+  multi-line file and silently returns its fallback, so the daemon and the other managers see
+  empty status.
+- If you want history, append to a **separate** file and leave the status file alone.
+- Checked by `test/conventions.test.mjs`.
+
+### Reading a JSON-lines log
+One line can be half-written. Parse each line inside `try { … } catch { }` and skip bad lines;
+an unprotected `JSON.parse` in a manager's main loop kills the manager.
+
 ## Testing
 - Build: `npm run build` (runs `tsc -p .`)
 - Typecheck: `npm run typecheck`
 - Full test: `npm run test` (builds + runs `test/*.test.mjs`)
 - Sync to game: `npm run sync`
+- Conventions: `test/conventions.test.mjs` reads `src/` as text and enforces the pitfalls above
+- Hook: `.githooks/pre-commit` runs `npm test`; `npm install` enables it (`core.hooksPath`)
+- CI: `.github/workflows/ci.yml` runs typecheck and tests on every push and pull request
 
 ## Common Bitburner API patterns
 - Server names: `"home"`, `"n00dles"`, `"w0r1d_d43m0n"` (string literals)
