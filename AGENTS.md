@@ -101,6 +101,12 @@ Self-optimizing full-game automation for Bitburner. Written from scratch in Type
 - **One task per session, one task per commit.** Take one item from the "To do" list in
   `README.md`, finish it, commit it, and stop. Start a new session for the next item.
 - **Change only what the task names.** No drive-by refactors, renames or reformatting.
+- **Do every step the item lists, and nothing else.** Many items have several steps
+  ("Change", "Also …", a test to add, an `ALLOWED` entry to delete). Before you start, write
+  your plan as a numbered list with one line per step from the item, and check it against the
+  item. A plan built from your own diagnosis instead of the item's steps misses parts: one
+  attempt at item 1 fixed the `installing` check but skipped the `factionsModule` guard and
+  the `ALLOWED` entry, so the fix was incomplete and `npm test` failed.
 - **Find code by its text, not by line number.** Line numbers in the to-do list drift.
 - **If the code does not match the task description, stop and report it.** Do not guess.
 - **Check your assumption before you build on it.** If a fix depends on how an `ns` function
