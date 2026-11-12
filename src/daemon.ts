@@ -253,6 +253,7 @@ export async function main(ns: NS): Promise<void> {
   let lastNotes = "";
   let lastError = "";
   let lastShareOnly = false;
+  let lastTickError = "";
 
   const event = (kind: string, msg: string, data?: unknown) => {
     appendJsonl(ns, DATA.events, { t: Date.now(), kind, msg, data }, 3000);
@@ -274,233 +275,247 @@ export async function main(ns: NS): Promise<void> {
   };
 
   while (true) {
-    // ---- new build pushed by tools/sync.mjs → restart on it ----
-    const nextBuild = ns.read(BUILD_MARKER);
-    if (nextBuild !== build && spawnTask(ns, SCRIPTS.restart)) {
-      event("start", `new build ${nextBuild}: restarting`);
-      return;
-    }
-    const cfg: DaemonConfig = { ...DEFAULTS, ...readJson<Partial<DaemonConfig>>(ns, DATA.config, {}) };
-
-    // ---- root ----
-    const fresh = rootAll(ns, allHosts(ns));
-    if (fresh.length) event("root", `rooted ${fresh.join(", ")}`);
-
-    // ---- telemetry ----
-    const snap = await runTask<Snapshot>(ns, "tasks/snapshot.js");
-    if (snap.ok && snap.value) {
-      tracker.push(snap.value);
-      trackRuns(ns, snap.value, tracker, event, build);
-    } else if (snap.error !== lastError) {
-      lastError = snap.error ?? "";
-      event("error", `snapshot failed: ${snap.error}`);
-    }
-    const s = tracker.latest();
-    const m = tracker.metrics();
-
-    // ---- install in progress? (freeze economy and manager restarts to avoid racing the install task) ----
-    const installing = ns.isRunning("tasks/install.js", "home");
-
-    // ---- casino ($10b per install, early in a run) ----
-    if (s && cfg.casino) gate("casino", casinoModule(ns, s, m, event));
-
-    // ---- IPvGO manager ----
-    if (cfg.go.enabled !== false) {
-      writeJson(ns, DATA.goConfig, cfg.go);
-      if (!ns.isRunning(SCRIPTS.goManager, "home") && ns.exec(SCRIPTS.goManager, "home")) event("go", "started IPvGO manager");
-    }
-
-    // ---- stocks: keep the planner's infra share in cash, pause while the casino bets ----
-    if (cfg.manageStocks) {
-      const casinoBetting = ns.isRunning(SCRIPTS.casinoTable, "home");
-      const reserveCash = !!current?.shareAll || !!current?.redPillPush;
-      const reserveFrac = Math.max(DEFAULT_STOCKS.reserveFrac, current?.infraSpend ?? 0);
-      const ctl: StocksControl = {
-        trade: !casinoBetting,
-        accessBudgetFrac: reserveCash ? 0 : cfg.stocksAccessBudgetFrac,
-        cfg: { reserveFrac, ...cfg.stocks },
-      };
-      writeJson(ns, DATA.stocksConfig, ctl);
-      if (!ns.isRunning(SCRIPTS.stocksManager, "home") && !installing && ns.getServerMaxRam("home") >= cfg.stocksMinHomeGB && ns.exec(SCRIPTS.stocksManager, "home"))
-        event("stocks", "started stock manager");
-    }
-
-    // ---- hacknet: budget follows the planner's infra share; no buying while the casino bets ----
-    // hacknet *servers* (hashes) need SF9 or BitNode 9; plain hacknet nodes make money instead
-    const hashServers = !!s && ((s.sourceFiles["9"] ?? 0) > 0 || s.node === 9);
-    if (cfg.manageHacknet && hashServers) {
-      const ctl: HacknetControl = {
-        buy: !ns.isRunning(SCRIPTS.casinoTable, "home") && !current?.redPillPush,
-        cfg: { budgetFrac: Math.max(0.05, current?.infraSpend ?? 0.25), ...cfg.hacknet },
-      };
-      if (current?.shareAll) {
-        ctl.reserve = current.augReserve;
-        ctl.shareRam = true;
-        // share-only spending is centralised in economy.js so left-over cloud budget
-        // can spill into hacknet RAM without two scripts racing for the same cash
-        if (cfg.infraSpend == null) {
-          ctl.buy = false;
-          ctl.budget = 0;
-        }
+    let tickMs = DEFAULTS.tickMs;
+    // one bad tick must not stop the daemon: an uncaught error here used to end it
+    // silently (the game only shows a popup), leaving every manager unsupervised
+    try {
+      // ---- new build pushed by tools/sync.mjs → restart on it ----
+      const nextBuild = ns.read(BUILD_MARKER);
+      if (nextBuild !== build && spawnTask(ns, SCRIPTS.restart)) {
+        event("start", `new build ${nextBuild}: restarting`);
+        return;
       }
-      writeJson(ns, DATA.hacknetConfig, ctl);
-      if (!ns.isRunning(SCRIPTS.hacknetManager, "home") && !installing && ns.exec(SCRIPTS.hacknetManager, "home")) event("hacknet", "started hacknet manager");
-    }
+      const cfg: DaemonConfig = { ...DEFAULTS, ...readJson<Partial<DaemonConfig>>(ns, DATA.config, {}) };
 
-    // ---- corporation (SF3 / BN3): creation waits for spare cash and no casino bets ----
-    const corpOk = cfg.manageCorp && !!s && ((s.sourceFiles["3"] ?? 0) > 0 || s.node === 3);
-    if (corpOk) {
-      // bribe target: the rep gap of the faction being ground, else the biggest pending gap
-      // (bribes, like donations, need a faction that offers work)
-      const gaps = (current?.pending ?? []).filter((c) => c.repGap > 0 && c.donation === 0 && workableFactions.has(c.faction));
-      const gap = gaps.find((c) => c.faction === current?.work?.faction) ?? [...gaps].sort((a, b) => b.repGap - a.repGap)[0];
-      const ctl: CorpControl = {
-        // creating a corporation costs $150b: never while the Red Pill is the goal
-        allowCreate: !ns.isRunning(SCRIPTS.casinoTable, "home") && !current?.shareAll && !current?.redPillPush,
-        bribeTarget: gap ? { faction: gap.faction, repGap: gap.repGap } : null,
-        cfg: cfg.corp,
+      // ---- root ----
+      const fresh = rootAll(ns, allHosts(ns));
+      if (fresh.length) event("root", `rooted ${fresh.join(", ")}`);
+
+      // ---- telemetry ----
+      const snap = await runTask<Snapshot>(ns, "tasks/snapshot.js");
+      if (snap.ok && snap.value) {
+        tracker.push(snap.value);
+        trackRuns(ns, snap.value, tracker, event, build);
+      } else if (snap.error !== lastError) {
+        lastError = snap.error ?? "";
+        event("error", `snapshot failed: ${snap.error}`);
+      }
+      const s = tracker.latest();
+      const m = tracker.metrics();
+
+      // ---- install in progress? (freeze economy and manager restarts to avoid racing the install task) ----
+      const installing = ns.isRunning("tasks/install.js", "home");
+
+      // ---- casino ($10b per install, early in a run) ----
+      if (s && cfg.casino) gate("casino", casinoModule(ns, s, m, event));
+
+      // ---- IPvGO manager ----
+      if (cfg.go.enabled !== false) {
+        writeJson(ns, DATA.goConfig, cfg.go);
+        if (!ns.isRunning(SCRIPTS.goManager, "home") && ns.exec(SCRIPTS.goManager, "home")) event("go", "started IPvGO manager");
+      }
+
+      // ---- stocks: keep the planner's infra share in cash, pause while the casino bets ----
+      if (cfg.manageStocks) {
+        const casinoBetting = ns.isRunning(SCRIPTS.casinoTable, "home");
+        const reserveCash = !!current?.shareAll || !!current?.redPillPush;
+        const reserveFrac = Math.max(DEFAULT_STOCKS.reserveFrac, current?.infraSpend ?? 0);
+        const ctl: StocksControl = {
+          trade: !casinoBetting,
+          accessBudgetFrac: reserveCash ? 0 : cfg.stocksAccessBudgetFrac,
+          cfg: { reserveFrac, ...cfg.stocks },
+        };
+        writeJson(ns, DATA.stocksConfig, ctl);
+        if (!ns.isRunning(SCRIPTS.stocksManager, "home") && !installing && ns.getServerMaxRam("home") >= cfg.stocksMinHomeGB && ns.exec(SCRIPTS.stocksManager, "home"))
+          event("stocks", "started stock manager");
+      }
+
+      // ---- hacknet: budget follows the planner's infra share; no buying while the casino bets ----
+      // hacknet *servers* (hashes) need SF9 or BitNode 9; plain hacknet nodes make money instead
+      const hashServers = !!s && ((s.sourceFiles["9"] ?? 0) > 0 || s.node === 9);
+      if (cfg.manageHacknet && hashServers) {
+        const ctl: HacknetControl = {
+          buy: !ns.isRunning(SCRIPTS.casinoTable, "home") && !current?.redPillPush,
+          cfg: { budgetFrac: Math.max(0.05, current?.infraSpend ?? 0.25), ...cfg.hacknet },
+        };
+        if (current?.shareAll) {
+          ctl.reserve = current.augReserve;
+          ctl.shareRam = true;
+          // share-only spending is centralised in economy.js so left-over cloud budget
+          // can spill into hacknet RAM without two scripts racing for the same cash
+          if (cfg.infraSpend == null) {
+            ctl.buy = false;
+            ctl.budget = 0;
+          }
+        }
+        writeJson(ns, DATA.hacknetConfig, ctl);
+        if (!ns.isRunning(SCRIPTS.hacknetManager, "home") && !installing && ns.exec(SCRIPTS.hacknetManager, "home")) event("hacknet", "started hacknet manager");
+      }
+
+      // ---- corporation (SF3 / BN3): creation waits for spare cash and no casino bets ----
+      const corpOk = cfg.manageCorp && !!s && ((s.sourceFiles["3"] ?? 0) > 0 || s.node === 3);
+      if (corpOk) {
+        // bribe target: the rep gap of the faction being ground, else the biggest pending gap
+        // (bribes, like donations, need a faction that offers work)
+        const gaps = (current?.pending ?? []).filter((c) => c.repGap > 0 && c.donation === 0 && workableFactions.has(c.faction));
+        const gap = gaps.find((c) => c.faction === current?.work?.faction) ?? [...gaps].sort((a, b) => b.repGap - a.repGap)[0];
+        const ctl: CorpControl = {
+          // creating a corporation costs $150b: never while the Red Pill is the goal
+          allowCreate: !ns.isRunning(SCRIPTS.casinoTable, "home") && !current?.shareAll && !current?.redPillPush,
+          bribeTarget: gap ? { faction: gap.faction, repGap: gap.repGap } : null,
+          cfg: cfg.corp,
+        };
+        writeJson(ns, DATA.corpConfig, ctl);
+        if (!ns.isRunning(SCRIPTS.corpManager, "home") && !installing && ns.exec(SCRIPTS.corpManager, "home")) event("corp", "started corporation manager");
+      }
+
+      // ---- coding contracts (and, once per build, the solver self-test on dummies) ----
+      if (cfg.manageContracts) {
+        if (!selftestStarted && readJson<{ build?: string }>(ns, DATA.contractsSelftest, {}).build !== build)
+          selftestStarted = spawnTask(ns, "tasks/contracts-selftest.js", [build]) > 0;
+        if (Date.now() - lastContracts > cfg.contractsEveryMs && spawnTask(ns, "tasks/contracts.js") > 0) lastContracts = Date.now();
+      }
+
+      // ---- scratch cleanup: stale tmp/call in/out files otherwise stay in the save forever ----
+      if (Date.now() - lastCleanup > 30 * 60_000 && spawnTask(ns, "tasks/cleanup.js") > 0) lastCleanup = Date.now();
+
+      // ---- hacking manager ----
+      const wanted: string[] = [];
+      if (s?.gang && cfg.manageGang) wanted.push(SCRIPTS.gangManager);
+      if (cfg.go.enabled !== false) wanted.push(SCRIPTS.goManager);
+      if (bladeburnerWanted) wanted.push(SCRIPTS.bladeburnerManager);
+      if (cfg.manageStocks && ns.getServerMaxRam("home") >= cfg.stocksMinHomeGB) wanted.push(SCRIPTS.stocksManager);
+      if (cfg.manageHacknet && s && ((s.sourceFiles["9"] ?? 0) > 0 || s.node === 9)) wanted.push(SCRIPTS.hacknetManager);
+      // keep room for the casino table while this install's $10b allowance is unclaimed
+      if (s && cfg.casino && (s.earned.casino ?? 0) < CASINO_CAP) wanted.push(SCRIPTS.casinoTable);
+      // plus room for the Stanek charger while it waits for a big enough block of home RAM
+      if (corpOk) wanted.push(SCRIPTS.corpManager);
+      // ---- user modules ----
+      for (const um of cfg.userModules ?? []) {
+        if (!ns.fileExists(um.script, "home") || ns.getServerMaxRam("home") < (um.minHomeGB ?? 0)) continue;
+        wanted.push(um.script);
+        if (!ns.isRunning(um.script, "home", ...(um.args ?? [])) && ns.exec(um.script, "home", 1, ...(um.args ?? [])))
+          event("user", `started user module ${um.script}`);
+      }
+      // room for infiltrate.js (+ its proxies) while the daemon wants it running
+      if (readJson<{ active?: boolean }>(ns, DATA.infiltrationConfig, {}).active) wanted.push(SCRIPTS.infiltrate);
+      // corp calls run through ~22 GB proxies (corporation functions cost 10–20 GB each)
+      // (only once a corporation exists: before that the manager just waits)
+      const corpProxyGB = corpOk && ns.isRunning(SCRIPTS.corpManager, "home") && readJson<{ exists?: boolean }>(ns, DATA.corp, {}).exists ? 22 : 0;
+      // other managers' proxies run alongside the daemon's: Go cheats (~9.6 GB), infiltration's
+      // location lookups (~16.6 GB)
+      const procs = new Set(ns.ps("home").map((x) => x.filename));
+      const managerProxyGB = (procs.has(SCRIPTS.goManager) ? 10 : 0) + (procs.has(SCRIPTS.infiltrate) ? 17 : 0);
+      const reserve = homeReserve(ns, wanted, (stanekStatus?.reserveGB ?? 0) + corpProxyGB + managerProxyGB);
+      lastReserve = reserve;
+      const shareOnly = current?.shareAll === true && s?.work?.type === "FACTION";
+      if (shareOnly !== lastShareOnly) {
+        event(
+          "hack",
+          shareOnly
+            ? "money target met and faction rep is the bottleneck: sharing the whole pool"
+            : "money needed again: resuming hacking batches",
+        );
+        lastShareOnly = shareOnly;
+      }
+      const hackCfg: Partial<HackConfig> = {
+        homeReserve: reserve,
+        // lend spare RAM to factions while we are working for one
+        shareFrac: s?.work?.type === "FACTION" ? 1 : 0,
+        shareOnly,
+        // hacking level gating something valuable: farm hacking XP with part of the pool.
+        // For Daedalus, money stops being the bottleneck at $100b, so give XP the larger share.
+        xpShare:
+          !shareOnly && current?.hackXp
+            ? Math.min(
+                1,
+                Math.max(
+                  0,
+                  current.hackXp.why === "Daedalus" && (s?.money ?? 0) < DAEDALUS_MONEY
+                    ? cfg.hackXpShare
+                    : cfg.hackXpShareMax,
+                ),
+              )
+            : 0,
+        skipHosts: [...(stanekStatus?.reserveHosts ?? []), ...(readJson<{ hosts?: string[] }>(ns, DATA.userReserve, {}).hosts ?? [])],
       };
-      writeJson(ns, DATA.corpConfig, ctl);
-      if (!ns.isRunning(SCRIPTS.corpManager, "home") && !installing && ns.exec(SCRIPTS.corpManager, "home")) event("corp", "started corporation manager");
-    }
+      writeJson(ns, DATA.hackConfig, hackCfg);
+      if (!ns.isRunning(SCRIPTS.hackManager, "home") && !installing) {
+        const pid = ns.exec(SCRIPTS.hackManager, "home");
+        if (pid) event("hack", "started hacking manager");
+      }
 
-    // ---- coding contracts (and, once per build, the solver self-test on dummies) ----
-    if (cfg.manageContracts) {
-      if (!selftestStarted && readJson<{ build?: string }>(ns, DATA.contractsSelftest, {}).build !== build)
-        selftestStarted = spawnTask(ns, "tasks/contracts-selftest.js", [build]) > 0;
-      if (Date.now() - lastContracts > cfg.contractsEveryMs && spawnTask(ns, "tasks/contracts.js") > 0) lastContracts = Date.now();
-    }
-
-    // ---- scratch cleanup: stale tmp/call in/out files otherwise stay in the save forever ----
-    if (Date.now() - lastCleanup > 30 * 60_000 && spawnTask(ns, "tasks/cleanup.js") > 0) lastCleanup = Date.now();
-
-    // ---- hacking manager ----
-    const wanted: string[] = [];
-    if (s?.gang && cfg.manageGang) wanted.push(SCRIPTS.gangManager);
-    if (cfg.go.enabled !== false) wanted.push(SCRIPTS.goManager);
-    if (bladeburnerWanted) wanted.push(SCRIPTS.bladeburnerManager);
-    if (cfg.manageStocks && ns.getServerMaxRam("home") >= cfg.stocksMinHomeGB) wanted.push(SCRIPTS.stocksManager);
-    if (cfg.manageHacknet && s && ((s.sourceFiles["9"] ?? 0) > 0 || s.node === 9)) wanted.push(SCRIPTS.hacknetManager);
-    // keep room for the casino table while this install's $10b allowance is unclaimed
-    if (s && cfg.casino && (s.earned.casino ?? 0) < CASINO_CAP) wanted.push(SCRIPTS.casinoTable);
-    // plus room for the Stanek charger while it waits for a big enough block of home RAM
-    if (corpOk) wanted.push(SCRIPTS.corpManager);
-    // ---- user modules ----
-    for (const um of cfg.userModules ?? []) {
-      if (!ns.fileExists(um.script, "home") || ns.getServerMaxRam("home") < (um.minHomeGB ?? 0)) continue;
-      wanted.push(um.script);
-      if (!ns.isRunning(um.script, "home", ...(um.args ?? [])) && ns.exec(um.script, "home", 1, ...(um.args ?? [])))
-        event("user", `started user module ${um.script}`);
-    }
-    // room for infiltrate.js (+ its proxies) while the daemon wants it running
-    if (readJson<{ active?: boolean }>(ns, DATA.infiltrationConfig, {}).active) wanted.push(SCRIPTS.infiltrate);
-    // corp calls run through ~22 GB proxies (corporation functions cost 10–20 GB each)
-    // (only once a corporation exists: before that the manager just waits)
-    const corpProxyGB = corpOk && ns.isRunning(SCRIPTS.corpManager, "home") && readJson<{ exists?: boolean }>(ns, DATA.corp, {}).exists ? 22 : 0;
-    // other managers' proxies run alongside the daemon's: Go cheats (~9.6 GB), infiltration's
-    // location lookups (~16.6 GB)
-    const procs = new Set(ns.ps("home").map((x) => x.filename));
-    const managerProxyGB = (procs.has(SCRIPTS.goManager) ? 10 : 0) + (procs.has(SCRIPTS.infiltrate) ? 17 : 0);
-    const reserve = homeReserve(ns, wanted, (stanekStatus?.reserveGB ?? 0) + corpProxyGB + managerProxyGB);
-    lastReserve = reserve;
-    const shareOnly = current?.shareAll === true && s?.work?.type === "FACTION";
-    if (shareOnly !== lastShareOnly) {
-      event(
-        "hack",
-        shareOnly
-          ? "money target met and faction rep is the bottleneck: sharing the whole pool"
-          : "money needed again: resuming hacking batches",
-      );
-      lastShareOnly = shareOnly;
-    }
-    const hackCfg: Partial<HackConfig> = {
-      homeReserve: reserve,
-      // lend spare RAM to factions while we are working for one
-      shareFrac: s?.work?.type === "FACTION" ? 1 : 0,
-      shareOnly,
-      // hacking level gating something valuable: farm hacking XP with part of the pool.
-      // For Daedalus, money stops being the bottleneck at $100b, so give XP the larger share.
-      xpShare:
-        !shareOnly && current?.hackXp
-          ? Math.min(
-              1,
-              Math.max(
-                0,
-                current.hackXp.why === "Daedalus" && (s?.money ?? 0) < DAEDALUS_MONEY
-                  ? cfg.hackXpShare
-                  : cfg.hackXpShareMax,
-              ),
-            )
-          : 0,
-      skipHosts: [...(stanekStatus?.reserveHosts ?? []), ...(readJson<{ hosts?: string[] }>(ns, DATA.userReserve, {}).hosts ?? [])],
-    };
-    writeJson(ns, DATA.hackConfig, hackCfg);
-    if (!ns.isRunning(SCRIPTS.hackManager, "home") && !installing) {
-      const pid = ns.exec(SCRIPTS.hackManager, "home");
-      if (pid) event("hack", "started hacking manager");
-    }
-
-    // ---- factions & augmentations ----
-    if (s && Date.now() - lastFactions > cfg.factionsEveryMs) {
-      try {
-        current = (await factionsModule(ns, s, m, cfg, { ...DEFAULT_PLAN, ...cfg.plan }, event, installing)) ?? current;
-        lastFactions = Date.now();
-      } catch (e) {
-        // CallError = no RAM for a proxy right now: try again next tick
-        if (!(e instanceof CallError)) {
+      // ---- factions & augmentations ----
+      if (s && Date.now() - lastFactions > cfg.factionsEveryMs) {
+        try {
+          current = (await factionsModule(ns, s, m, cfg, { ...DEFAULT_PLAN, ...cfg.plan }, event, installing)) ?? current;
           lastFactions = Date.now();
-          event("error", `faction module failed: ${e instanceof Error ? e.message : String(e)}`);
+        } catch (e) {
+          // CallError = no RAM for a proxy right now: try again next tick
+          if (!(e instanceof CallError)) {
+            lastFactions = Date.now();
+            event("error", `faction module failed: ${e instanceof Error ? e.message : String(e)}`);
+          }
         }
+        if (current) gate("install", current.install ? null : current.installHold);
+        const notes = current?.notes.join("; ") ?? "";
+        if (notes && notes !== lastNotes) event("plan", notes);
+        lastNotes = notes;
       }
-      if (current) gate("install", current.install ? null : current.installHold);
-      const notes = current?.notes.join("; ") ?? "";
-      if (notes && notes !== lastNotes) event("plan", notes);
-      lastNotes = notes;
-    }
 
-    // ---- economy (frozen while casino.js bets or install.js is running: spending would
-    // make the game reject a bet, or steal cash the install needs to buy augs) ----
-    if (s && Date.now() - lastEconomy > cfg.economyEveryMs && !ns.isRunning(SCRIPTS.casinoTable, "home") && !installing) {
-      lastEconomy = Date.now();
-      // Share-only: economy.js gets the whole surplus above the aug reserve. It keeps
-      // 25% for hacknet RAM and lets any cloud/home budget it cannot use spill there too,
-      // so shrinking cloud caps no longer leave cash idle.
-      const shareAll = cfg.infraSpend == null && current?.shareAll === true;
-      const spend = cfg.infraSpend ?? current?.infraSpend ?? 0.5;
-      const budget = shareAll ? Math.max(0, current?.infraBudget ?? 0) : s.money * spend;
-      const reserve = current?.infraReserve ?? 0;
-      const args: (string | number)[] = [budget, reserve];
-      if (shareAll) args.push(0.25);
-      const r = await runTask<string[]>(ns, "tasks/economy.js", args);
-      if (r.ok) for (const a of r.value ?? []) event("buy", a);
-      else if (r.reason !== "ram") event("error", `economy failed: ${r.error}`);
-    }
-
-    // ---- persistence ----
-    if (s) {
-      const hackStatus = readJson<HackInfo>(ns, DATA.hackStatus, {});
-      writeJson(ns, DATA.status, { snapshot: s, metrics: m, hack: hackStatus, plan: current, stanek: stanekStatus, ram: ramReport(ns) });
-      const ctx: DaemonContext = {
-        t: Date.now(),
-        node: s.node,
-        money: s.money,
-        hackLevel: s.hackLevel,
-        homeRam: s.homeRam,
-        homeFree: ns.getServerMaxRam("home") - ns.getServerUsedRam("home"),
-        uiBusy: ns.isRunning(SCRIPTS.casinoTable, "home") || ns.ps("home").some((x) => x.filename === SCRIPTS.infiltrate) || graftingRunning(ns, s),
-        workFaction: current?.work?.faction ?? null,
-        installPlanned: !!current?.install,
-        sinceInstallMs: m.sinceInstall,
-      };
-      writeJson(ns, DATA.context, ctx);
-      if (Date.now() - lastMetricsLine > 60_000) {
-        lastMetricsLine = Date.now();
-        appendJsonl(ns, DATA.metrics, { ...metricsLine(s, m, hackStatus, current, build), systems: systemsLine(ns) }, 1500);
+      // ---- economy (frozen while casino.js bets or install.js is running: spending would
+      // make the game reject a bet, or steal cash the install needs to buy augs) ----
+      if (s && Date.now() - lastEconomy > cfg.economyEveryMs && !ns.isRunning(SCRIPTS.casinoTable, "home") && !installing) {
+        lastEconomy = Date.now();
+        // Share-only: economy.js gets the whole surplus above the aug reserve. It keeps
+        // 25% for hacknet RAM and lets any cloud/home budget it cannot use spill there too,
+        // so shrinking cloud caps no longer leave cash idle.
+        const shareAll = cfg.infraSpend == null && current?.shareAll === true;
+        const spend = cfg.infraSpend ?? current?.infraSpend ?? 0.5;
+        const budget = shareAll ? Math.max(0, current?.infraBudget ?? 0) : s.money * spend;
+        const reserve = current?.infraReserve ?? 0;
+        const args: (string | number)[] = [budget, reserve];
+        if (shareAll) args.push(0.25);
+        const r = await runTask<string[]>(ns, "tasks/economy.js", args);
+        if (r.ok) for (const a of r.value ?? []) event("buy", a);
+        else if (r.reason !== "ram") event("error", `economy failed: ${r.error}`);
       }
-      draw(ns, s, m, hackStatus, current, recent);
+
+      // ---- persistence ----
+      if (s) {
+        const hackStatus = readJson<HackInfo>(ns, DATA.hackStatus, {});
+        writeJson(ns, DATA.status, { snapshot: s, metrics: m, hack: hackStatus, plan: current, stanek: stanekStatus, ram: ramReport(ns) });
+        const ctx: DaemonContext = {
+          t: Date.now(),
+          node: s.node,
+          money: s.money,
+          hackLevel: s.hackLevel,
+          homeRam: s.homeRam,
+          homeFree: ns.getServerMaxRam("home") - ns.getServerUsedRam("home"),
+          uiBusy: ns.isRunning(SCRIPTS.casinoTable, "home") || ns.ps("home").some((x) => x.filename === SCRIPTS.infiltrate) || graftingRunning(ns, s),
+          workFaction: current?.work?.faction ?? null,
+          installPlanned: !!current?.install,
+          sinceInstallMs: m.sinceInstall,
+        };
+        writeJson(ns, DATA.context, ctx);
+        if (Date.now() - lastMetricsLine > 60_000) {
+          lastMetricsLine = Date.now();
+          appendJsonl(ns, DATA.metrics, { ...metricsLine(s, m, hackStatus, current, build), systems: systemsLine(ns) }, 1500);
+        }
+        draw(ns, s, m, hackStatus, current, recent);
+      }
+      tickMs = cfg.tickMs;
+    } catch (e) {
+      const msg = e instanceof Error ? (e.stack ?? e.message) : String(e);
+      try {
+        if (msg !== lastTickError) event("error", `daemon tick failed: ${msg.slice(0, 1500)}`);
+        lastTickError = msg;
+      } catch {
+        throw e; // the script itself is being killed
+      }
     }
 
-    await ns.sleep(cfg.tickMs);
+    await ns.sleep(tickMs);
   }
 }
 
