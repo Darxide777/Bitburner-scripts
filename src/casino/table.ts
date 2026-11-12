@@ -85,7 +85,7 @@ export async function main(ns: NS): Promise<void> {
   };
 
   // let the UI settle after a (re)load, then go to the blackjack table
-  await ns.sleep(1500);
+  await ns.sleep(300);
   if (!(await enterTable(ns, doc, say))) return finish("couldn't reach the blackjack table");
   say("at the blackjack table — starting");
 
@@ -101,7 +101,7 @@ export async function main(ns: NS): Promise<void> {
     const saveBtn = doc.querySelector<HTMLButtonElement>('button[aria-label="save game"]');
     if (!saveBtn) return finish("couldn't find the save button");
     saveBtn.click();
-    await ns.sleep(1000); // saveGame() is async (IndexedDB); give it time to land
+    await ns.sleep(100); // saveGame() is async (IndexedDB); 100ms is enough
 
     // 2. play
     const outcome = await playHand(ns, doc, bet);
@@ -147,7 +147,7 @@ async function enterTable(ns: NS, doc: Document, say: (m: string) => void): Prom
   }
   say("entering Iker Molina Casino");
   if (!sing.goToLocation("Iker Molina Casino")) return say("goToLocation failed"), false;
-  await ns.sleep(300);
+  await ns.sleep(100);
   dismissPopups(doc);
   const tableBtn = await waitFor(ns, () => button(doc, (t) => t.startsWith("Play blackjack")), 5000);
   if (!tableBtn) return say("no 'Play blackjack' button on screen"), false;
@@ -176,7 +176,7 @@ async function playHand(ns: NS, doc: Document, bet: number): Promise<Outcome | "
   // back to $100m, making the second write look unchanged → Start stays disabled.
   setReactInput(doc, input, String(bet > 1 ? bet - 1 : bet + 1));
   setReactInput(doc, input, String(bet));
-  await ns.sleep(50);
+  await ns.sleep(10);
   if (readResult(doc)) return retry("previous result still shown after changing the bet");
   dismissPopups(doc);
   const start = await waitFor(ns, () => button(doc, (t) => t === "Start"), 3000);
@@ -196,7 +196,7 @@ async function playHand(ns: NS, doc: Document, bet: number): Promise<Outcome | "
     const btn = button(doc, (t) => t === act);
     if (!btn) return null;
     pressTrusted(btn);
-    await ns.sleep(60);
+    await ns.sleep(20);
   }
   return null;
 }
@@ -316,7 +316,7 @@ async function waitFor<T>(ns: NS, probe: () => T | null | undefined, timeoutMs: 
   while (Date.now() < end) {
     const v = probe();
     if (v) return v;
-    await ns.sleep(25);
+    await ns.sleep(50);
   }
   return null;
 }
