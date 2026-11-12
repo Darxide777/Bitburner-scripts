@@ -2,3 +2,6 @@ node_modules/
 dist/
 logs/
 .sync-manifest.json
+
+# Qwen Code session scratch (skill arguments, etc.)
+.qwen/tmp/
