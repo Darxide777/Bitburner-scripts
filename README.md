@@ -460,12 +460,13 @@ opened caches.
 
 ## To do
 
-Work list from the code review of 2026-11-11 (commit `c5776eb`). Written so that a small model
+Work list from the code review of 2026-11-11 (items 0–17 at commit `c5776eb`; items 18–22,
+covering the areas that review skipped, at commit `25aeab2`). Written so that a small model
 can pick up one item at a time.
 
 **Before you start:** read `AGENTS.md`, sections "Rules for every change" and "Pitfalls".
 In short: one item per session and per commit, change only the files the item names, find code
-by the quoted text (line numbers are from commit `c5776eb` and drift), tick the item's box in
+by the quoted text (line numbers drift, so items don't give them), tick the item's box in
 the same commit, and stop if the code no longer matches the description. A pre-commit hook and
 CI run `npm test`; never bypass them.
 
@@ -547,6 +548,34 @@ CI run `npm test`; never bypass them.
   - Change: at the top of the `while (true)` loop, after `await G.nextUpdate();`, add
     `if (!ns.fileExists("Formulas.exe", "home")) continue;`
 
+- [ ] **18. Sync server accepts connections from the whole network** — `tools/sync.mjs`
+  - Evidence: `ss -tlnp` shows the server listening on `*:12525` (every interface), not only
+    on this machine.
+  - Problem: `new WebSocketServer({ port: PORT })` binds to all interfaces. Any device on the
+    network can connect, which disconnects the game (`if (socket) socket.close();`), receives
+    every pushed file, and answers `getFileNames` / `getFile` itself. `pullLogs` then writes
+    each answer to `join(LOGS, filename.slice("data/".length))`, so a name such as
+    `data/../../x.txt` writes outside `logs/`.
+  - Change: (a) next to `const PORT = …`, add
+    `const HOST = argValue("--host") ?? process.env.BB_HOST ?? "127.0.0.1";` and pass it:
+    `new WebSocketServer({ port: PORT, host: HOST })`; put `HOST` in the "listening on" log
+    line in place of `localhost`. (b) In `pullLogs`, add `&& !n.includes("..")` to the
+    `.filter(…)` that builds `wanted`.
+  - Done when: `npm test` passes and `ss -tlnp | grep 12525` shows `127.0.0.1:12525`. The repo
+    owner must then check that the game still connects. If it does not, set the game's
+    Remote API hostname to `127.0.0.1`.
+
+- [ ] **19. Analysis tools crash on one bad log line** — `tools/nodes.mjs`, `tools/sleeve-shock.mjs`
+  - Problem: both call `JSON.parse(l)` on every line without a `try`, so one half-written
+    line in a `logs/*.txt` fallback file stops the whole report. `tools/runs.mjs` already
+    skips bad lines.
+  - Change: in `nodes.mjs`, replace `.map((l) => JSON.parse(l))` inside `const jsonl = …`
+    with the `.flatMap((l) => { try { return [JSON.parse(l)]; } catch { return []; } })`
+    pattern from `tools/runs.mjs`. Do the same in `sleeve-shock.mjs` for the
+    `.map((l) => JSON.parse(l))` that builds `lines`.
+  - Done when: `node tools/nodes.mjs` and `node tools/sleeve-shock.mjs` still print the
+    same report as before the change.
+
 ### Performance — ready to do
 
 - [ ] **8. Share-thread count scans every host every 200 ms** — `src/hack/manager.ts`
@@ -568,6 +597,23 @@ CI run `npm test`; never bypass them.
     file on every 2-second tick.
   - Change: cache the `ns.ls("home", "tasks/")` result and each file's `getScriptRam` in a
     module-level `Map`, refreshed at most every 60 s. Output must stay identical.
+
+- [ ] **20. IPvGO asks for the cheat chance on every move** — `src/go/play.ts`
+  - Evidence: `logs/go.txt` shows 2,355 games and 6,058 cheat attempts. Every one of our moves
+    first starts a proxy script for `go.cheat.getCheatSuccessChance`, which costs time from
+    the move's 200–350 ms thinking budget.
+  - Problem: the chance only changes when we attempt a cheat (it falls with each attempt in
+    a game) or when a new game starts.
+  - Change: just before the `for (let turn = 0; …` loop, add
+    `let cachedChance: number | null = null;`. Replace
+    `const p = await call<number>(ns, "go.cheat.getCheatSuccessChance").catch(() => null);`
+    with
+    `const p = cachedChance ?? (await call<number>(ns, "go.cheat.getCheatSuccessChance").catch(() => null));`
+    and on the next line add `if (typeof p === "number") cachedChance = p;`. Right after
+    `c.attempts++;`, add `cachedChance = null;`.
+  - Do not cache `undefined` (no SF14.2) or `null` (no RAM this turn). The existing
+    `cheatsAvailable` flag already handles them.
+  - Done when: `npm test` passes, and nothing else in `src/go/play.ts` changed.
 
 ### Needs a design decision — not for small models
 
@@ -593,13 +639,34 @@ Do not start these without a written plan approved by the repo owner.
   Buying several affordable items per cycle would speed up early growth; needs a budget rule.
 - [ ] **17. No hacking income before Formulas.exe** — `src/hack/manager.ts` only shares until
   it is bought each install.
+- [ ] **21. A rejected Go move is replaced by a pass** — `src/go/play.ts`, the `catch` after
+  `go.makeMove`. If the opponent has just passed, our pass ends the game, which may throw away
+  a won position. Rejections are only printed to the script log, so nobody knows how often this
+  happens. First count them in `data/go.txt`, then decide whether to retry with the next-best move.
+- [ ] **22. Darknet failures are invisible** — `src/user/dnet/roamer.ts`, `lab.ts`, `solvers.ts`.
+  Solver and Labyrinth failures are only `ns.print`ed on remote servers. `data/dnet.txt`
+  counts rewards but no failures per password model. The only `lab` sample in
+  `logs/dnet.txt` shows `depth: -1`, so it's unknown whether the Labyrinth was ever solved. Decide how
+  roamers report results to home (the reward port is taken), then fix the solvers that fail most.
 
 ### Features carried over from the old road map
 
 - [ ] Hacknet: value SP, gym/study and company favor
 - [ ] Sleeves: pick recovery slots from the measured break-even instead of a fixed count
 
-### Not yet reviewed
+### Reviewed with nothing to do
 
-IPvGO, Stanek, the contract solvers, `src/user/dnet/lib.ts`, `solvers.ts` and `lab.ts`,
-grafting, and `tools/`.
+Second review, commit `25aeab2`, checked against the telemetry in `logs/`:
+
+- **Contract solvers**: 549 solved, 0 failed. The per-build self-test passes all 30 types.
+- **Stanek**: layout, charging and Church extra chargers behave as their comments describe.
+  The home block can't drop out of the charger search, because `homeReserve` is capped at half
+  of home.
+- **Grafting**: no graft has started, which is intended. The BN12 Daedalus money reserve
+  ($100b) is above current cash, and the top-value graft (QLink) costs $75t.
+- **IPvGO engine and search**: won 99% of logged games, with 16 ejections in 6,058 cheats.
+  Only items 20 and 21 above.
+- **`tools/`**: only items 18 and 19 above.
+- **`daemon started` 3,029 times in 76 h**: not a crash loop. The casino's save-scum reloads
+  restart every script. 2,670 of the restarts fall in hours with casino activity in
+  `logs/archive/casino-trace.jsonl`, and so do 27 of the 29 hours with 20 or more restarts.
