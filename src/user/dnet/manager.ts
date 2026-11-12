@@ -54,11 +54,14 @@ function updateReserve(ns: NS, store: Store): void {
   writeJson(ns, DATA.userReserve, { ...current, hosts: [...hosts] });
 }
 
-function killDarkwebRoamers(ns: NS): number {
+function killDarkwebRoamers(ns: NS, p: DnetPaths): number {
   let killed = 0;
   try {
     for (const proc of ns.ps("darkweb")) {
-      if (!proc.filename.endsWith("dnet-roamer.js") && !proc.filename.endsWith("roamer.js")) continue;
+      const isRoamer = proc.filename.endsWith("dnet-roamer.js") || proc.filename.endsWith("roamer.js");
+      if (!isRoamer) continue;
+      // preserve the current auto roamer (this manager's own process)
+      if (proc.filename === p.roamer && proc.args[0] === "auto") continue;
       try {
         if (ns.kill(proc.filename, "darkweb", ...proc.args)) killed++;
       } catch {}
@@ -137,7 +140,7 @@ async function ensureDarkweb(ns: NS, p: DnetPaths, store: Store): Promise<boolea
     return false;
   }
 
-  const killed = killDarkwebRoamers(ns);
+  const killed = killDarkwebRoamers(ns, p);
   if (killed) log(ns, "stopped " + killed + " old darkweb roamer(s)");
 
   const files = [p.lib, p.solvers, p.roamer];
@@ -185,7 +188,7 @@ export async function main(ns: NS): Promise<void> {
     lastReward = lines.length ? lines[lines.length - 1] : "";
   } catch {}
 
-  const killed = killDarkwebRoamers(ns);
+  const killed = killDarkwebRoamers(ns, p);
   if (killed) log(ns, "restarting " + killed + " darkweb roamer(s) on this build");
   if (mergeLocalSnapshots(ns, store)) saveStore(ns, store);
   updateReserve(ns, store);

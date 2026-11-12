@@ -69,8 +69,13 @@ async function ensureSession(
     if (result.success) return true;
     const code = result.result ? result.result.code : null;
     if (code === null || code === 351 || code === 408 || code === 503) return false;
-    delete store[host];
-    saveStore(ns, store);
+    // Only delete on 401 (wrong password). Other non-retryable codes may be transient
+    // (e.g. server temporarily rejecting sessions) and we don't want to lose a valid crack.
+    if (code === 401) {
+      delete store[host];
+      saveStore(ns, store);
+    }
+    return false;
   }
 
   if (needsFeedback(details) && charisma < details.requiredCharismaSkill) {
