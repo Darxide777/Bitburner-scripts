@@ -520,8 +520,18 @@ CI run `npm test`; never bypass them.
     and again, and `allowEntries` never looks at it.
   - Change: (a) remove `stopped: !v.trade` from that `Object.assign`; (b) on the line
     `allowEntries = v.trade;` use `allowEntries = v.trade && !pre.stopped;`.
-  - Result: once the lifetime record is negative after `minTrades` closed trades, pre-4S only
-    exits positions until the 4S API is bought, and the event is logged once.
+  - Also reset the record for each BitNode. `pre` is loaded from `data/stocks.txt`
+    (`const pre = { realized: 0, closed: 0, stopped: false, ...prev.pre };`), which survives
+    installs and BitNode resets, and nothing clears it. Without a reset, (a) and (b) would keep
+    pre-4S stopped in every later BitNode. So: (c) add `node?: number;` to the `pre` type in
+    `StocksStatus`; (d) replace that `const pre = …` line with
+    `const nodeMark = ns.getResetInfo().lastNodeReset;`
+    `const pre = prev.pre?.node === nodeMark ? { realized: 0, closed: 0, stopped: false, ...prev.pre } : { realized: 0, closed: 0, stopped: false, node: nodeMark };`
+    `ns.getResetInfo` adds 1 GB to the script's RAM; that is expected.
+  - Result: once this BitNode's record is negative after `minTrades` closed trades, pre-4S only
+    exits positions until the 4S API is bought, and the event is logged once. The next BitNode
+    starts with a clean record.
+  - Done when: `npm test` passes, and only `src/stocks/manager.ts` changed.
 
 - [ ] **5. Darknet roamer keeps running old code** — `src/user/dnet/manager.ts`
   - Problem: since commit `8604f2a`, `killDarkwebRoamers` skips the running `"auto"` roamer. It
