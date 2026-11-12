@@ -101,11 +101,12 @@ export async function main(ns: NS): Promise<void> {
     const st = readJson<{ metrics?: { long?: { income?: number; bySource?: Record<string, number> }; sinceInstall?: number } }>(ns, DATA.status, {});
     const corp = readJson<{ t?: number; exists?: boolean; revenue?: number; expenses?: number; valuation?: number; tribute?: number }>(ns, DATA.corp, {});
     const since = (st.metrics?.sinceInstall ?? 0) / 1000;
-    const runs = ns
-      .read(DATA.runs)
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => (JSON.parse(l) as { durationMs?: number }).durationMs ?? 0);
+    let runs: number[] = [];
+    try {
+      runs = ns.read(DATA.runs).split("\n").filter(Boolean).map((l) => (JSON.parse(l) as { durationMs?: number }).durationMs ?? 0);
+    } catch {
+      /* torn line — fall back to empty */
+    }
     const remainingSec = Math.max(cfg.minRemainingSec, expectedRunMs(runs, 30 * 60_000) / 1000 - since);
     status.remainingSec = remainingSec;
     const hackStatus = readJson<{ targets?: { host: string; ratePerSec: number }[] }>(ns, DATA.hackStatus, {});
