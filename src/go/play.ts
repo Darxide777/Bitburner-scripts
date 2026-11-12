@@ -5,7 +5,7 @@ import type { GoOpponent, NS } from "@ns";
 import { BLACK, Board, EMPTY, key, parse, WHITE } from "../lib/go/engine.js";
 import { call } from "../lib/call.js";
 import { PASS, search } from "../lib/go/mcts.js";
-import { readJson, writeJson, appendStatus } from "../lib/io.js";
+import { readJson, writeJson } from "../lib/io.js";
 import { DATA } from "../lib/paths.js";
 import {
   armKey,
@@ -168,7 +168,7 @@ export async function main(ns: NS): Promise<void> {
     record(st.arms, armKey(opponent, size), won, gain, ms, `${end.blackScore}–${end.whiteScore}`, cfg.alpha);
     st.games++;
     writeJson(ns, ARMS_FILE, st);
-    appendStatus(ns, DATA.go, {
+    writeJson(ns, DATA.go, {
       t: Date.now(),
       last: { opponent, size, won, score: `${end.blackScore}–${end.whiteScore}`, gainPct: gain, ms },
       games: st.games,

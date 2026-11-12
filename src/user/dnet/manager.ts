@@ -2,7 +2,7 @@
 // in-game files; no real network, host, or credential is involved.
 import type { NS } from "@ns";
 import type { DaemonContext } from "../../daemon.js";
-import { appendLines, readJson, writeJson, appendStatus } from "../../lib/io.js";
+import { appendLines, readJson, writeJson } from "../../lib/io.js";
 import { DATA } from "../../lib/paths.js";
 import {
   REWARD_PORT,
@@ -261,7 +261,7 @@ export async function main(ns: NS): Promise<void> {
     }
 
     try {
-      appendStatus(ns, DATA.dnet, {
+      writeJson(ns, DATA.dnet, {
         t: Date.now(),
         known: keys.length,
         charisma: ns.getPlayer().skills.charisma,

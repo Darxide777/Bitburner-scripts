@@ -25,13 +25,10 @@ export function writeJson(ns: NS, file: string, value: unknown): void {
   ns.write(file, JSON.stringify(value, replacer), "w");
 }
 
-/** Append a status snapshot as one JSON line. Uses the same replacer as writeJson. */
-export function appendStatus(ns: NS, file: string, value: unknown): void {
-  appendJsonl(ns, file, value, 10000);
-}
-
-/** Append one JSON line to a log file, keeping at most `maxLines` lines.
- * Trimming rewrites the file only occasionally (when it exceeds maxLines by 10%). */
+/**
+ * Append one JSON line to a log file, keeping at most `maxLines` lines.
+ * Trimming rewrites the file only occasionally (when it exceeds maxLines by 10%).
+ */
 export function appendJsonl(ns: NS, file: string, value: unknown, maxLines = 5000): void {
   ns.write(file, JSON.stringify(value, replacer) + "\n", "a");
   const raw = ns.read(file);

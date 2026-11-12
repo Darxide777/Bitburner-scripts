@@ -13,7 +13,7 @@
 //   homeReserve (GB kept free on home), maxTargets, spacing (ms), shareFrac (0..1)
 import type { NS, Player, Server } from "@ns";
 import { allHosts, isHacknet } from "../lib/net.js";
-import { readJson, appendStatus } from "../lib/io.js";
+import { readJson, writeJson } from "../lib/io.js";
 import { DATA, SCRIPTS } from "../lib/paths.js";
 
 export interface HackConfig {
@@ -216,7 +216,7 @@ export async function main(ns: NS): Promise<void> {
           ratePerSec: st.mode === "batch" && st.cycleMs > 0 ? (st.expected / st.cycleMs) * 1000 : 0,
           busyFor: Math.max(0, st.busyUntil - Date.now()),
         }));
-      appendStatus(ns, DATA.hackStatus, {
+      writeJson(ns, DATA.hackStatus, {
         t: Date.now(),
         formulas: hasFormulas(),
         poolTotal,

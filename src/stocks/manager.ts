@@ -5,7 +5,7 @@
 // Writes data/stocks.txt; the daemon counts `value` as money when planning, and
 // tasks/install.js sells everything first (installing wipes positions without paying out).
 import type { NS } from "@ns";
-import { appendJsonl, readJson, writeJson, appendStatus } from "../lib/io.js";
+import { appendJsonl, readJson, writeJson } from "../lib/io.js";
 import {
   decideTrades,
   DEFAULT_PRE,
@@ -107,7 +107,7 @@ export async function main(ns: NS): Promise<void> {
     const preOn = ctl.pre4s !== false;
     if (!tix || (!api && !preOn)) {
       status.note = "waiting to afford market access (WSE → TIX API → 4S TIX API)";
-      appendStatus(ns, DATA.stocks, status);
+      writeJson(ns, DATA.stocks, status);
       await ns.sleep(30_000);
       continue;
     }
@@ -225,7 +225,7 @@ export async function main(ns: NS): Promise<void> {
       value += v;
     }
     Object.assign(status, { value, positions, realized, trades });
-    appendStatus(ns, DATA.stocks, status);
+    writeJson(ns, DATA.stocks, status);
     await S.nextUpdate();
   }
 }

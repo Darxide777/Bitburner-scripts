@@ -13,7 +13,7 @@
 // Steered by data/corp-config.txt from the daemon; status in data/corp.txt.
 import type { NS } from "@ns";
 import { call, callEach } from "../lib/call.js";
-import { appendJsonl, readJson, appendStatus } from "../lib/io.js";
+import { appendJsonl, readJson, writeJson } from "../lib/io.js";
 import { DATA } from "../lib/paths.js";
 import {
   bribeAmount,
@@ -207,7 +207,7 @@ export async function main(ns: NS): Promise<void> {
       else if (CREATE_COST > cash * cfg.createCashFrac)
         status.note = `waiting until $150b is ≤ ${cfg.createCashFrac * 100}% of cash`;
       else if (await cc<boolean>("createCorporation", CORP_NAME, true)) did(`created ${CORP_NAME}`);
-      appendStatus(ns, DATA.corp, status);
+      writeJson(ns, DATA.corp, status);
       await ns.sleep(30_000);
       continue;
     }
@@ -219,7 +219,7 @@ export async function main(ns: NS): Promise<void> {
     } catch (e) {
       status.note = `error: ${e instanceof Error ? e.message : String(e)}`;
     }
-    appendStatus(ns, DATA.corp, status);
+    writeJson(ns, DATA.corp, status);
 
     async function cycle() {
       let corp = (await cc<CorpInfo>("getCorporation"))!;

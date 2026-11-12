@@ -6,7 +6,7 @@
 //   usePlayer  may run actions (always with Simulacrum, otherwise only when the player has
 //              nothing better to do); skills/city/faction are managed regardless
 import type { BladeburnerActionName, BladeburnerActionType, BladeburnerBlackOpName, BladeburnerSkillName, CityName, NS } from "@ns";
-import { readJson, appendStatus } from "../lib/io.js";
+import { readJson, writeJson } from "../lib/io.js";
 import {
   chooseAction,
   DEFAULT_BB,
@@ -92,7 +92,7 @@ export async function main(ns: NS): Promise<void> {
       else if (B.joinBladeburnerDivision()) status.inDivision = true;
       else status.note = "can't join yet: needs all combat stats ≥ 100";
       if (!status.inDivision) {
-        appendStatus(ns, DATA.bladeburner, status);
+        writeJson(ns, DATA.bladeburner, status);
         await ns.sleep(10_000);
         continue;
       }
@@ -140,7 +140,7 @@ export async function main(ns: NS): Promise<void> {
     // ---- action ----
     if (!ctl.usePlayer) {
       status.note = "player busy with higher-value work";
-      appendStatus(ns, DATA.bladeburner, status);
+      writeJson(ns, DATA.bladeburner, status);
       await B.nextUpdate();
       continue;
     }
@@ -185,7 +185,7 @@ export async function main(ns: NS): Promise<void> {
       started.at = Date.now(); // same action repeats: next cycle starts now
     }
 
-    appendStatus(ns, DATA.bladeburner, status);
+    writeJson(ns, DATA.bladeburner, status);
     await B.nextUpdate();
   }
 }

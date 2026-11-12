@@ -3,7 +3,7 @@
 // Steered by data/gang-config.txt (the daemon sets mode: "respect" while the gang
 // faction still has rep-gated augs we want, otherwise "money").
 import type { GangMemberInfo, GangTaskStats, NS } from "@ns";
-import { readJson, appendStatus } from "../lib/io.js";
+import { readJson, writeJson } from "../lib/io.js";
 import { DEFAULT_GANG, decideGang, type GangConfig } from "../lib/plan/gang.js";
 import { DATA } from "../lib/paths.js";
 
@@ -93,7 +93,7 @@ export async function main(ns: NS): Promise<void> {
 
     const taskCounts: Record<string, number> = {};
     for (const t of Object.values(d.tasks)) taskCounts[t] = (taskCounts[t] ?? 0) + 1;
-    appendStatus(ns, DATA.gang, {
+    writeJson(ns, DATA.gang, {
       t: Date.now(),
       faction: gang.faction,
       mode: cfg.mode,

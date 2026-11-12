@@ -484,7 +484,7 @@ its fallback, which blinds the daemon and the other managers.
 
 ### Bugs — ready to do, most important first
 
-- [ ] **0. Status files were switched to append mode: undo it first** — commit `c85e1ea`
+- [x] **0. Status files were switched to append mode: undo it first** — commit `c85e1ea`
   - Problem: that commit replaced `writeJson` with `appendStatus` (JSON lines) for
     `data/hack.txt`, `gang.txt`, `hacknet.txt`, `stocks.txt`, `corp.txt`, `bladeburner.txt`,
     `go.txt` and `dnet.txt`, but every reader still uses `readJson`, which cannot parse a
