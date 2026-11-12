@@ -541,6 +541,10 @@ CI run `npm test`; never bypass them.
     `const nodeMark = ns.getResetInfo().lastNodeReset;`
     `const pre = prev.pre?.node === nodeMark ? { realized: 0, closed: 0, stopped: false, ...prev.pre } : { realized: 0, closed: 0, stopped: false, node: nodeMark };`
     `ns.getResetInfo` adds 1 GB to the script's RAM; that is expected.
+  - Evidence from BN12.27 (2026-11-12): `logs/stocks.txt` still holds `pre.closed: 99` and
+    `realized: -$2.018b`, the same numbers as the BN12 node before it, so this node never
+    started a fresh pre-4S record. Pre-4S entries were switched off once ("recent real trades
+    lost money") and never came back on before 4S was bought at 5.5h.
   - Result: once this BitNode's record is negative after `minTrades` closed trades, pre-4S only
     exits positions until the 4S API is bought, and the event is logged once. The next BitNode
     starts with a clean record.
@@ -598,6 +602,24 @@ CI run `npm test`; never bypass them.
     `.map((l) => JSON.parse(l))` that builds `lines`.
   - Done when: `node tools/nodes.mjs` and `node tools/sleeve-shock.mjs` still print the
     same report as before the change.
+
+- [ ] **23. Two milestones are recorded at 0m from the last BitNode's status files** — `src/daemon.ts`
+  - Evidence: in BN12.27 (`logs/nodes.txt`), "Bladeburner division" and "4S TIX API" are both
+    recorded 1.5 s after the reset, but `logs/events.txt` shows "joined the Bladeburner
+    division" at 1.9h and "bought 4S Market Data TIX API" at 5.5h. The two BN12 nodes before
+    it show the same 0m values.
+  - Problem: `noteMilestones` reads `DATA.bladeburner`, `DATA.stocks` and `DATA.corp` with
+    plain `readJson`. These files survive the BitNode reset, so on the first tick they still
+    say `inDivision: true` / `api4s: true` from the node that just ended.
+  - Change, only in `noteMilestones`: replace the three lines
+    `const bb = readJson<…>(ns, DATA.bladeburner, {});`, `const stocks = readJson<…>(ns, DATA.stocks, {});`
+    and `const corp = readJson<…>(ns, DATA.corp, {});` with reads that ignore a file written
+    before this BitNode started. Add `t?: number;` to each of the three type arguments and
+    keep a file only when `(x.t ?? 0) >= s.lastNodeReset`, else use `{}`. All three
+    managers write `t: Date.now()` in their status.
+  - Leave `bbInDivision`, the `reached` table and the old records in `data/milestones.txt`
+    unchanged.
+  - Done when: `npm test` passes, and only `noteMilestones` in `src/daemon.ts` changed.
 
 ### Performance — ready to do
 
@@ -658,6 +680,9 @@ Do not start these without a written plan approved by the repo owner.
   for XP is never batched, although extra weakens cannot desync a batch.
 - [ ] **15. Home RAM starvation** — 387 errors in 71 hours, 205 of them "not enough RAM for
   snapshot.js". Each one is a skipped daemon tick. Find what fills home past the reserve.
+  BN12.27 (22.6h) had only 7 such errors: 6 of them between 21:22 and 21:24 UTC on 2026-11-11,
+  12 minutes after an install, and one at 16:09. Check whether the problem is now limited to
+  the first minutes after an install before designing a fix.
 - [ ] **16. Corporation buys one thing per cycle** — `src/corp/manager.ts`, `cheapest(purchases, budget())`.
   Buying several affordable items per cycle would speed up early growth; needs a budget rule.
 - [ ] **17. No hacking income before Formulas.exe** — `src/hack/manager.ts` only shares until
@@ -669,7 +694,10 @@ Do not start these without a written plan approved by the repo owner.
 - [ ] **22. Darknet failures are invisible** — `src/user/dnet/roamer.ts`, `lab.ts`, `solvers.ts`.
   Solver and Labyrinth failures are only `ns.print`ed on remote servers. `data/dnet.txt`
   counts rewards but no failures per password model. The only `lab` sample in
-  `logs/dnet.txt` shows `depth: -1`, so it's unknown whether the Labyrinth was ever solved. Decide how
+  `logs/dnet.txt` shows `depth: -1`, so it's unknown whether the Labyrinth was ever solved.
+  At the end of BN12.27 `logs/dnet.txt` shows player charisma 109 against the lab's
+  required 300, so the roamer skips the Labyrinth (`skip labyrinth …: charisma … required`)
+  and the solver never runs. Raising charisma is a separate question from solver failures. Decide how
   roamers report results to home (the reward port is taken), then fix the solvers that fail most.
 
 ### Features carried over from the old road map
@@ -678,6 +706,19 @@ Do not start these without a written plan approved by the repo owner.
 - [ ] Sleeves: pick recovery slots from the measured break-even instead of a fixed count
 
 ### Reviewed with nothing to do
+
+BN12.27 telemetry (2026-11-11 14:40 → 2026-11-12 13:15 UTC, 22.6h, 5 installs):
+
+- **1h34m tracking gap at 01:42–03:16 on 11-12**: `restart failed: couldn't exec daemon.js`
+  during a build sync. That is the outage commit `b73e63f` fixes (it landed after this gap).
+- **Corporation**: $150b spent each BN12 node, almost nothing back before the node ends. It
+  is created only once $150b is ≤ 10% of cash and is under 0.001% of the node's $16.7q, so it costs
+  little.
+- **Hacknet**: $145t spent against $18b of money back (the rest went to hash upgrades on
+  servers). That is 0.5% of the hacking income.
+- **Stocks at node end**: $6.8t was still in open positions when the BitNode was destroyed,
+  0.04% of cash.
+- **`daemon started` 779 times**: casino save-scum reloads and about 35 build syncs, as below.
 
 Second review, commit `25aeab2`, checked against the telemetry in `logs/`:
 
