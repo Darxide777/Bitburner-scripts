@@ -458,40 +458,148 @@ daemon reports `uiBusy` or `installPlanned`. Generated state stays in `user/dnet
 `passwords.json`, `charisma.txt`, the fixed `snap.json` snapshot, and a `rewards.txt` ledger of
 opened caches.
 
-## Roadmap
+## To do
 
-- [x] Tooling: TS build, Remote API sync with type refresh + telemetry pull
-- [x] Telemetry + metrics: income/s, rep/s, karma/s, time to gang, rep/money ETAs, per-run summaries
-- [x] Rooting, HWGW batch manager, faction `share()`
-- [x] Economy: TOR/programs, home RAM/cores, cloud servers
-- [x] Factions & augments: invites with city conflicts, travel, backdoors, rep-grind choice,
-      escalation-aware purchase order, donations, NeuroFlux, install timing, w0r1d_d43m0n
-- [x] Install timing learned from run history (marginal value of waiting vs. recent runs' average)
-- [x] Casino: blackjack save-scumming for $10b per install
-- [x] Stanek's Gift: acceptance, layout solver, per-install charging
-- [x] IPvGO: rules engine, MCTS player, self-optimizing matchup choice
-- [x] Company work → megacorp factions, when the route beats faction work (logged to judge it)
-- [x] Skill gates: hacking-XP farming, study (hacking/charisma) and gym (combat) when a level blocks a faction,
-      a company job, or w0r1d_d43m0n
-- [x] Shrink the home reserve: daemon 33 → ~8 GB (`window` DOM charge), faction actions via the
-      proxy (34 GB task gone), contracts on spare RAM, corp proxy reserve only with a corp
-- [x] Sleeves: karma for the gang, then one per grind faction; shock recovery; sleeve augs
-- [x] Gang: creation, recruit, equipment, training, respect/money mode, wanted control,
-      territory warfare, ascension
-- [x] Grafting: per-aug value vs. Entropy and time, logged every 10 min
-- [x] Grafting: autoplay when net/hour clears time, cash and cumulative-Entropy caps
-- [x] Gang: v3 install penalty — hold ascensions before installs, report the projected loss
-- [x] Hacknet servers: data-priced hash spending, payback-based production
+Work list from the code review of 2026-11-11 (commit `c5776eb`). Written so that a small model
+can pick up one item at a time.
+
+**Rules for every item**
+
+- Do exactly one item per commit. Change only the files the item names.
+- Line numbers are from commit `c5776eb` and will drift: find the code by the quoted text.
+- Before committing, run `npm run typecheck` and `npm test`. Both must pass.
+- Do not change behaviour the item does not mention. Do not reformat or rename nearby code.
+- When the item is done, tick its box here in the same commit.
+- If the code no longer matches the description, stop and say so instead of guessing.
+
+**Pitfall behind several items:** `ns.isRunning(script, host)` and `ns.kill(script, host)` only
+match a process that was started with **no arguments**. For a script started with arguments, pass
+the same arguments, use the pid, or look for the filename in `ns.ps(host)`.
+
+**Status files are not logs:** files such as `data/hack.txt`, `data/gang.txt`, `data/stocks.txt`,
+`data/corp.txt`, `data/hacknet.txt`, `data/bladeburner.txt`, `data/go.txt` and `data/dnet.txt`
+hold one JSON object and are read with `readJson`. Always write them with `writeJson`. Appending
+lines to them (`appendJsonl` or a wrapper around it) makes every `readJson` of that file return
+its fallback, which blinds the daemon and the other managers.
+
+### Bugs — ready to do, most important first
+
+- [ ] **1. Install freeze never turns on** — `src/daemon.ts`
+  - Find: `const installing = ns.isRunning("tasks/install.js", "home");`
+  - Problem: `tasks/install.js` is started with arguments (see `spawnTask` in `src/lib/task.ts`),
+    so this is always `false` and the economy task and managers still run during an install.
+  - Change: `const installing = ns.ps("home").some((p) => p.filename === "tasks/install.js");`
+  - Also, in `factionsModule`, find `if (p.install && !busy) {` and change the condition to
+    `if (p.install && !busy && !installing) {`, so a running install is not killed and restarted
+    by `freeHome`.
+  - Done when: typecheck and tests pass, and no other line of the file changed.
+
+- [ ] **2. Hacknet manager dies on a torn `runs.txt` line** — `src/hacknet/manager.ts`
+  - Find: `const runs = ns` followed by `.read(DATA.runs)` and `JSON.parse(l)`.
+  - Problem: one half-written line makes `JSON.parse` throw and the whole manager exits.
+  - Change: copy the pattern already used in `gangModule` in `src/daemon.ts`: declare
+    `let runs: number[] = [];` and do the read/parse inside `try { … } catch { /* torn line */ }`.
+
+- [ ] **3. Installs donate too much** — `src/lib/plan/factions.ts`, `test/plan.test.mjs`
+  - Problem: each candidate aug gets its own `donation` (`repGap / data.repPerDollar`). When two
+    augs from the same faction both need a donation, `install.donate` lists both and
+    `src/tasks/install.ts` pays both, although paying the larger one alone unlocks both.
+  - Change, only in the `install = { … donate: … }` object near the end of `plan()`: in the
+    non-final branch, build `donate` with **one entry per faction**, using the largest
+    `donation` among that faction's `ready` candidates.
+  - Add a test to `test/plan.test.mjs`: two ready augs from one faction with donations 100 and
+    300 give `install.donate` equal to `[[faction, 300]]`.
+  - Do not change how `donations`, `readyCost` or `augReserve` are computed; that is item 12.
+
+- [ ] **4. Pre-4S stock loss brake does not hold** — `src/stocks/manager.ts`
+  - Evidence: the event "pre-4S trading stopped" was logged 186 times in 71 hours, and pre-4S
+    trading lost $2.0b over 99 trades.
+  - Problem: `Object.assign(pre, { verdict: v.why, edge: v.edge, samples: v.samples, stopped: !v.trade });`
+    overwrites `pre.stopped` on every tick, so the later block
+    `if (!api && !pre.stopped && pre.closed >= preCfg.minTrades && pre.realized < 0)` fires again
+    and again, and `allowEntries` never looks at it.
+  - Change: (a) remove `stopped: !v.trade` from that `Object.assign`; (b) on the line
+    `allowEntries = v.trade;` use `allowEntries = v.trade && !pre.stopped;`.
+  - Result: once the lifetime record is negative after `minTrades` closed trades, pre-4S only
+    exits positions until the 4S API is bought, and the event is logged once.
+
+- [ ] **5. Darknet roamer keeps running old code** — `src/user/dnet/manager.ts`
+  - Problem: since commit `8604f2a`, `killDarkwebRoamers` skips the running `"auto"` roamer. It
+    is called at manager start to restart roamers "on this build", so after a code sync the old
+    roamer is never replaced. It is also now identical to `killStaleRoamers`.
+  - Change: give `killDarkwebRoamers` a third parameter `keepAuto: boolean` and skip the auto
+    roamer only when it is `true`. Pass `false` at the call in `main` (log text "restarting …
+    on this build") and `true` at the call in `ensureDarkweb`. Make `killStaleRoamers` call
+    `killDarkwebRoamers(ns, p, true)` instead of repeating the loop.
+  - Fix the comment "this manager's own process": the roamer is a separate script.
+
+- [ ] **6. Duplicate labyrinth solvers** — `src/user/dnet/roamer.ts`
+  - Find, in `startLab`: `if (ns.isRunning(p.lab, me)) return true;`
+  - Problem: the solver is started with arguments (`ns.exec(p.lab, me, threads, host, …)`), so
+    this check is always false and a second solver can start after the 10-minute cooldown.
+  - Change: `if (ns.isRunning(p.lab, me, host, details.requiredCharismaSkill)) return true;`
+    (the same arguments as the `ns.exec` call below it). Do not use `ns.ps` here: it would add
+    RAM to a script that runs on small servers.
+
+- [ ] **7. Gang manager crashes without Formulas.exe** — `src/gang/manager.ts`
+  - Problem: `ns.formulas.gang` throws when Formulas.exe is missing, the script exits, and the
+    daemon starts it again every tick.
+  - Change: at the top of the `while (true)` loop, after `await G.nextUpdate();`, add
+    `if (!ns.fileExists("Formulas.exe", "home")) continue;`
+
+### Performance — ready to do
+
+- [ ] **8. Share-thread count scans every host every 200 ms** — `src/hack/manager.ts`
+  - Find the block that starts with the comment `// Count all actually running share threads`.
+  - Change: move that whole block inside `if (Date.now() - lastStatus > 5_000) {`, at its top.
+    In the share launch loop just above, remove the now-useless `shareThreads += t` (keep the
+    `ns.exec` call).
+
+- [ ] **9. Corporation asks the game the same questions every cycle** — `src/corp/manager.ts`
+  - Problem: every cycle calls `hasUnlock` and `hasResearched` through the call proxy (one
+    temporary script each) for things that never become false again.
+  - Change: keep a `Set<string>` next to `configured` (outside the `while` loop). Before calling
+    `hasUnlock(u)` or `hasResearched(division, name)`, check the set under the keys
+    `unlock:<u>` / `research:<division>:<name>`; add the key when the answer is `true` or after
+    a successful purchase/research. Never cache a `false` answer.
+
+- [ ] **10. Daemon recomputes static RAM numbers every tick** — `src/daemon.ts`
+  - Problem: `ramReport` and `homeReserve` call `ns.ls` and `ns.getScriptRam` for every task
+    file on every 2-second tick.
+  - Change: cache the `ns.ls("home", "tasks/")` result and each file's `getScriptRam` in a
+    module-level `Map`, refreshed at most every 60 s. Output must stay identical.
+
+### Needs a design decision — not for small models
+
+Do not start these without a written plan approved by the repo owner.
+
+- [ ] **11. Sharing starves the money batches during faction work** — `src/hack/manager.ts`,
+  `src/daemon.ts`. The daemon sets `shareFrac: 1` whenever the player works for a faction, and
+  the manager relaunches 10-second share scripts on all free RAM every tick, so RAM freed by a
+  landing batch is taken before the next cycle can use it. In 81 faction-work samples RAM use
+  was 99% with a share multiplier of 1.30. Needs a measurement of income with and without
+  sharing, then a rule for how much RAM share may take while batches are running.
+- [ ] **12. Donation totals are double-counted in the planner** — `src/lib/plan/factions.ts`.
+  `donations`, `readyCost` and `augReserve` add one donation per aug instead of one per faction,
+  which makes affordable augs look unaffordable. Fixing it changes which augs are chosen.
+- [ ] **13. Favor-unlock installs are skipped once four or more augs are ready** —
+  `src/lib/plan/factions.ts`, the `else if (favorUnlock)` branch of the install decision.
+  Decide whether that is intended.
+- [ ] **14. XP farm blocks its own target** — `src/hack/manager.ts`. The server being weakened
+  for XP is never batched, although extra weakens cannot desync a batch.
+- [ ] **15. Home RAM starvation** — 387 errors in 71 hours, 205 of them "not enough RAM for
+  snapshot.js". Each one is a skipped daemon tick. Find what fills home past the reserve.
+- [ ] **16. Corporation buys one thing per cycle** — `src/corp/manager.ts`, `cheapest(purchases, budget())`.
+  Buying several affordable items per cycle would speed up early growth; needs a budget rule.
+- [ ] **17. No hacking income before Formulas.exe** — `src/hack/manager.ts` only shares until
+  it is bought each install.
+
+### Features carried over from the old road map
+
 - [ ] Hacknet: value SP, gym/study and company favor
-- [x] Bladeburner: join (after Stanek), skills, city, stamina/chaos control, contracts/ops/black ops
-- [x] Bladeburner first: gym training to join early, Operation Daedalus as a win condition
-- [x] Sleeves on Bladeburner contracts; shock-recovery rotation + experiment telemetry
 - [ ] Sleeves: pick recovery slots from the measured break-even instead of a fixed count
-- [x] Coding contracts: all 30 types, per-build self-test against the game
-- [x] Stock market: 4S forecasts, longs + shorts, liquidation before install
-- [x] Stock market: pre-4S trading from price history, self-disabling on a losing record
-- [x] Corporation: Agriculture, boost materials, research, investment rounds, dividends
-- [x] Corporation phase 2: Tobacco products, Plants exports, data-driven dividends, bribes
-- [x] Infiltration: model-reading autoplayer, rep-per-second trigger vs. faction work
-- [x] IPvGO cheats (SF14.2): played when their search-valued EV beats the normal move
-- [x] Endgame: Daedalus → The Red Pill → w0r1d_d43m0n, then auto-continue into the next BN12 level
+
+### Not yet reviewed
+
+IPvGO, Stanek, the contract solvers, `src/user/dnet/lib.ts`, `solvers.ts` and `lab.ts`,
+grafting, and `tools/`.
