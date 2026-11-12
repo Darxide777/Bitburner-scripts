@@ -494,7 +494,7 @@ CI run `npm test`; never bypass them.
   - Also delete the `tasks/install.js` entry from `ALLOWED` in `test/conventions.test.mjs`.
   - Done when: `npm test` passes, and nothing else in `src/daemon.ts` changed.
 
-- [ ] **2. Hacknet manager dies on a torn `runs.txt` line** — `src/hacknet/manager.ts`
+- [x] **2. Hacknet manager dies on a torn `runs.txt` line** — `src/hacknet/manager.ts`
   - Find: `const runs = ns` followed by `.read(DATA.runs)` and `JSON.parse(l)`.
   - Problem: one half-written line makes `JSON.parse` throw and the whole manager exits.
   - Change: skip bad lines instead of dropping the whole history. Replace only the
