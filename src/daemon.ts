@@ -298,6 +298,9 @@ export async function main(ns: NS): Promise<void> {
     const s = tracker.latest();
     const m = tracker.metrics();
 
+    // ---- install in progress? (freeze economy and manager restarts to avoid racing the install task) ----
+    const installing = ns.isRunning("tasks/install.js", "home");
+
     // ---- casino ($10b per install, early in a run) ----
     if (s && cfg.casino) gate("casino", casinoModule(ns, s, m, event));
 
@@ -318,7 +321,7 @@ export async function main(ns: NS): Promise<void> {
         cfg: { reserveFrac, ...cfg.stocks },
       };
       writeJson(ns, DATA.stocksConfig, ctl);
-      if (!ns.isRunning(SCRIPTS.stocksManager, "home") && ns.getServerMaxRam("home") >= cfg.stocksMinHomeGB && ns.exec(SCRIPTS.stocksManager, "home"))
+      if (!ns.isRunning(SCRIPTS.stocksManager, "home") && !installing && ns.getServerMaxRam("home") >= cfg.stocksMinHomeGB && ns.exec(SCRIPTS.stocksManager, "home"))
         event("stocks", "started stock manager");
     }
 
@@ -341,7 +344,7 @@ export async function main(ns: NS): Promise<void> {
         }
       }
       writeJson(ns, DATA.hacknetConfig, ctl);
-      if (!ns.isRunning(SCRIPTS.hacknetManager, "home") && ns.exec(SCRIPTS.hacknetManager, "home")) event("hacknet", "started hacknet manager");
+      if (!ns.isRunning(SCRIPTS.hacknetManager, "home") && !installing && ns.exec(SCRIPTS.hacknetManager, "home")) event("hacknet", "started hacknet manager");
     }
 
     // ---- corporation (SF3 / BN3): creation waits for spare cash and no casino bets ----
@@ -358,7 +361,7 @@ export async function main(ns: NS): Promise<void> {
         cfg: cfg.corp,
       };
       writeJson(ns, DATA.corpConfig, ctl);
-      if (!ns.isRunning(SCRIPTS.corpManager, "home") && ns.exec(SCRIPTS.corpManager, "home")) event("corp", "started corporation manager");
+      if (!ns.isRunning(SCRIPTS.corpManager, "home") && !installing && ns.exec(SCRIPTS.corpManager, "home")) event("corp", "started corporation manager");
     }
 
     // ---- coding contracts (and, once per build, the solver self-test on dummies) ----
@@ -432,7 +435,7 @@ export async function main(ns: NS): Promise<void> {
       skipHosts: [...(stanekStatus?.reserveHosts ?? []), ...(readJson<{ hosts?: string[] }>(ns, DATA.userReserve, {}).hosts ?? [])],
     };
     writeJson(ns, DATA.hackConfig, hackCfg);
-    if (!ns.isRunning(SCRIPTS.hackManager, "home")) {
+    if (!ns.isRunning(SCRIPTS.hackManager, "home") && !installing) {
       const pid = ns.exec(SCRIPTS.hackManager, "home");
       if (pid) event("hack", "started hacking manager");
     }
@@ -440,7 +443,7 @@ export async function main(ns: NS): Promise<void> {
     // ---- factions & augmentations ----
     if (s && Date.now() - lastFactions > cfg.factionsEveryMs) {
       try {
-        current = (await factionsModule(ns, s, m, cfg, { ...DEFAULT_PLAN, ...cfg.plan }, event)) ?? current;
+        current = (await factionsModule(ns, s, m, cfg, { ...DEFAULT_PLAN, ...cfg.plan }, event, installing)) ?? current;
         lastFactions = Date.now();
       } catch (e) {
         // CallError = no RAM for a proxy right now: try again next tick
@@ -455,8 +458,9 @@ export async function main(ns: NS): Promise<void> {
       lastNotes = notes;
     }
 
-    // ---- economy (frozen while casino.js bets: spending would make the game reject a bet) ----
-    if (s && Date.now() - lastEconomy > cfg.economyEveryMs && !ns.isRunning(SCRIPTS.casinoTable, "home")) {
+    // ---- economy (frozen while casino.js bets or install.js is running: spending would
+    // make the game reject a bet, or steal cash the install needs to buy augs) ----
+    if (s && Date.now() - lastEconomy > cfg.economyEveryMs && !ns.isRunning(SCRIPTS.casinoTable, "home") && !installing) {
       lastEconomy = Date.now();
       // Share-only: economy.js gets the whole surplus above the aug reserve. It keeps
       // 25% for hacknet RAM and lets any cloud/home budget it cannot use spill there too,
@@ -724,6 +728,7 @@ async function gangModule(
   dcfg: DaemonConfig,
   event: (k: string, msg: string, d?: unknown) => void,
   sinceInstallMs = 0,
+  installing = false,
 ) {
   if (!data.gangFaction) {
     if (data.karma > GANG_KARMA) return;
@@ -738,7 +743,12 @@ async function gangModule(
   // respect → gang-faction rep while it still gates augs we want; otherwise money
   const needRep = (p.repGated[data.gangFaction] ?? 0) > 0;
   // time to the next install: now if one is planned, else the median recent run minus this one
-  const runs = ns.read(DATA.runs).split("\n").filter(Boolean).map((l) => (JSON.parse(l) as { durationMs?: number }).durationMs ?? 0);
+  let runs: number[] = [];
+  try {
+    runs = ns.read(DATA.runs).split("\n").filter(Boolean).map((l) => (JSON.parse(l) as { durationMs?: number }).durationMs ?? 0);
+  } catch {
+    /* torn line — fall back to empty */
+  }
   // past the typical run length there's no sign of an install coming: don't hold (undefined)
   const left = expectedRunMs(runs, 30 * 60_000) - sinceInstallMs;
   const installInSec = p.install ? 0 : left > 0 ? left / 1000 : undefined;
@@ -747,7 +757,7 @@ async function gangModule(
   if (ns.isRunning(SCRIPTS.casinoTable, "home") || p.shareAll || p.redPillPush)
     Object.assign(gcfg, { equipBudget: 0, augBudget: 0 });
   writeJson(ns, DATA.gangConfig, gcfg);
-  if (!ns.isRunning(SCRIPTS.gangManager, "home") && ns.exec(SCRIPTS.gangManager, "home"))
+  if (!ns.isRunning(SCRIPTS.gangManager, "home") && !installing && ns.exec(SCRIPTS.gangManager, "home"))
     event("gang", `started gang manager (${gcfg.mode} mode)`);
 }
 
@@ -1003,6 +1013,7 @@ async function factionsModule(
   dcfg: DaemonConfig,
   cfg: PlanConfig,
   event: (k: string, msg: string, d?: unknown) => void,
+  installing = false,
 ): Promise<Plan | null> {
   let data: FactionData;
   try {
@@ -1088,7 +1099,7 @@ async function factionsModule(
     lastCompanyKey = routeKey;
     appendJsonl(ns, DATA.company, { t: Date.now(), chosen: p.company, grindScore: p.grindScore, routes: p.companyRoutes, companies: data.companies }, 300);
   }
-  if (dcfg.manageGang) await gangModule(ns, data, p, dcfg, event, m.sinceInstall);
+  if (dcfg.manageGang) await gangModule(ns, data, p, dcfg, event, m.sinceInstall, installing);
 
   // Stanek before anything can buy an aug: the gift can only be accepted with no augs
   try {
@@ -1113,11 +1124,16 @@ async function factionsModule(
   if (dcfg.manageSleeves && s.sleeves > 0) {
     try {
       const targets = p.grindFactions;
-      const runDurations = ns
-        .read(DATA.runs)
-        .split("\n")
-        .filter(Boolean)
-        .map((l) => (JSON.parse(l) as { durationMs?: number }).durationMs ?? 0);
+      let runDurations: number[] = [];
+      try {
+        runDurations = ns
+          .read(DATA.runs)
+          .split("\n")
+          .filter(Boolean)
+          .map((l) => (JSON.parse(l) as { durationMs?: number }).durationMs ?? 0);
+      } catch {
+        /* torn line — fall back to empty */
+      }
       const runLeft = expectedRunMs(runDurations, 30 * 60_000) - m.sinceInstall;
       const needKarma = shouldFarmKarma({
         hasGang: !!data.gangFaction,

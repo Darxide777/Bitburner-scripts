@@ -93,8 +93,16 @@ export async function main(ns: NS): Promise<void> {
     }
     const player = ns.getPlayer();
     if (cfg.shareOnly && !shareOnlyActive) {
-      for (const h of hosts)
-        for (const script of [SCRIPTS.hackScript, SCRIPTS.growScript, SCRIPTS.weakenScript]) ns.kill(script, h);
+      // Kill all worker processes on each host. ns.kill(script, host) without args
+      // doesn't match workers started with args, so we use ns.ps() + kill by PID.
+      for (const h of hosts) {
+        for (const proc of ns.ps(h)) {
+          const name = proc.filename;
+          if (name === SCRIPTS.hackScript || name === SCRIPTS.growScript || name === SCRIPTS.weakenScript) {
+            try { ns.kill(name, h, ...proc.args); } catch {}
+          }
+        }
+      }
       states.clear();
     }
     shareOnlyActive = cfg.shareOnly === true;
@@ -177,12 +185,21 @@ export async function main(ns: NS): Promise<void> {
     }
 
     // ---- share leftover RAM with factions ----
-    shareThreads = 0;
     if (cfg.shareFrac > 0) {
       for (const [h, free] of workPool) {
         const t = Math.floor((free * cfg.shareFrac) / ramOf.s);
         if (t < 1) continue;
         if (ns.exec(SCRIPTS.shareScript, h, { threads: t, temporary: true }, 1, tag++)) shareThreads += t;
+      }
+    }
+    // Count all actually running share threads (not just launched this tick).
+    // Share scripts run ~10s each, so the running count is much higher than per-tick launches.
+    shareThreads = 0;
+    for (const h of hosts) {
+      for (const proc of ns.ps(h)) {
+        if (proc.filename === SCRIPTS.shareScript) {
+          shareThreads += proc.threads;
+        }
       }
     }
 
